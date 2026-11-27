@@ -5,11 +5,18 @@ import { z } from "zod";
 import {
   gardenGifts,
   giftShelfCapacity,
+  isGardenMerchantGift,
 } from "../../public/garden-art/gifts.js";
+
+export const gardenCatalogGiftId = z.enum(
+  /** @type {[keyof typeof gardenGifts, ...(keyof typeof gardenGifts)[]]} */ (
+    Object.keys(gardenGifts)
+  ),
+);
 
 export const gardenGiftId = z.enum(
   /** @type {[keyof typeof gardenGifts, ...(keyof typeof gardenGifts)[]]} */ (
-    Object.keys(gardenGifts)
+    Object.keys(gardenGifts).filter(isGardenMerchantGift)
   ),
 );
 /** @typedef {{kind:"admin"|"agent",id:string,generation:string}} Owner */
@@ -21,13 +28,15 @@ export const gardenGiftId = z.enum(
 
 /** @param {{giftId:keyof typeof gardenGifts,price?:number,stock:number}[]} configured */
 export function gardenGiftOffers(configured) {
-  return configured.map(({ giftId, price, stock }) => ({
-    ...gardenGifts[giftId],
-    giftId,
-    stock,
-    originalPrice: gardenGifts[giftId].price,
-    price: price ?? gardenGifts[giftId].price,
-  }));
+  return configured
+    .filter(({ giftId }) => isGardenMerchantGift(giftId))
+    .map(({ giftId, price, stock }) => ({
+      ...gardenGifts[giftId],
+      giftId,
+      stock,
+      originalPrice: gardenGifts[giftId].price,
+      price: price ?? gardenGifts[giftId].price,
+    }));
 }
 
 const roleId = z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/);
@@ -134,6 +143,16 @@ export function initializeGiftTables(db) {
       PRIMARY KEY(day,agent_id)
     );
   `);
+  if (
+    !db
+      .prepare(
+        "SELECT 1 FROM pragma_table_info('garden_items') WHERE name='event_note'",
+      )
+      .get()
+  )
+    db.exec(
+      "ALTER TABLE garden_items ADD COLUMN event_note TEXT NOT NULL DEFAULT ''",
+    );
   if (legacy)
     db.exec(`
     INSERT INTO garden_items(rowid,id,gift_id,name,usable,owner,consumed,source_id,slot,description,public_note)
@@ -154,6 +173,23 @@ export class GardenGifts {
   /** @param {import("node:sqlite").DatabaseSync} db */
   constructor(db) {
     this.db = db;
+  }
+
+  /** @param {Owner} owner @param {keyof typeof gardenGifts} giftId @param {string} [description] */
+  grantEventItem(owner, giftId, description = "") {
+    const gift = gardenGifts[giftId];
+    this.db
+      .prepare(
+        "INSERT INTO garden_items(id,gift_id,name,usable,owner,event_note) VALUES(?,?,?,?,?,?)",
+      )
+      .run(
+        randomUUID(),
+        giftId,
+        gift.name,
+        Number(gift.usable),
+        ownerKey(owner),
+        description,
+      );
   }
 
   /** @param {number} day @param {Owner} owner @param {import("./garden-service.mjs").State} state */
@@ -211,7 +247,7 @@ export class GardenGifts {
     return this.db
       .prepare(
         `
-      SELECT slot,gift_id AS giftId,name,description,public_note AS note
+      SELECT slot,gift_id AS giftId,name,COALESCE(NULLIF(description,''),event_note) AS description,public_note AS note
       FROM garden_items WHERE owner=? AND consumed=0 AND slot IS NOT NULL ORDER BY slot
     `,
       )
@@ -228,7 +264,7 @@ export class GardenGifts {
         this.db
           .prepare(
             `
-      SELECT id,gift_id AS giftId,name,usable,slot,source_id AS sourceId,description,public_note AS note
+      SELECT id,gift_id AS giftId,name,usable,slot,source_id AS sourceId,COALESCE(NULLIF(description,''),event_note) AS description,public_note AS note
       FROM garden_items WHERE owner=? AND consumed=0 ORDER BY rowid DESC
     `,
           )
@@ -254,7 +290,7 @@ export class GardenGifts {
       this.db
         .prepare(
           `
-      SELECT id,gift_id AS giftId,name,usable,slot,source_id AS sourceId,description,public_note AS note
+      SELECT id,gift_id AS giftId,name,usable,slot,source_id AS sourceId,COALESCE(NULLIF(description,''),event_note) AS description,public_note AS note
       FROM garden_items WHERE id=? AND owner=? AND consumed=0
     `,
         )

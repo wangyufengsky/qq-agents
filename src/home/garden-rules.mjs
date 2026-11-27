@@ -404,7 +404,7 @@ export function gardenPlantRules(settings) {
 /** @typedef {"ordinary" | "fine" | "perfect"} Quality */
 /**
  * @typedef {{id: string, cropId: string, actorId: string, plantedAt: number, sownClock?: number,
- * settledAt: number, maturedAt?: number, harvestCount?: number, blessed?: boolean,
+ * settledAt: number, maturedAt?: number, harvestCount?: number, blessed?: boolean, fullMoonDay?: number,
  * variant?: keyof typeof gardenVariants, variantName?: string, rainHours?: number, sunHours?: number, weatherHours?: number,
  * drizzleBonusDay?: number, water: number, growth: number, dry: number, low: number,
  * floodDays?: number, floodLoss?: number, qualityAdjustment?: number, earthwormDay?: number, witheredReason?: "drought" | "flood", fertilizer: number, status: "growing" | "mature" | "withered", quality: Quality | null,

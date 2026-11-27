@@ -13,10 +13,11 @@ import {
 import { GardenClock } from "./garden-clock.mjs";
 import { GardenCalendar } from "./garden-calendar.mjs";
 import { defaultWeather } from "./garden-weather.mjs";
-import { legacyEvents } from "./garden-event-rules.mjs";
+import { legacyEvents, withStoryEvents } from "./garden-event-rules.mjs";
 import {
   cropId,
   DAY,
+  HOUR,
   defaultGardenSettings,
   gardenSettings,
   withExpandedCrops,
@@ -37,6 +38,13 @@ const inputSchema = z.strictObject({
   requestId: z.string().regex(/^[A-Za-z0-9_-]{8,80}$/),
   action: z.discriminatedUnion("kind", [
     ...giftActions,
+    z.strictObject({
+      kind: z.literal("choose_event"),
+      eventId,
+      choiceId: id,
+      harvestId: z.uuid().optional(),
+      plot: plot.optional(),
+    }),
     z.strictObject({
       kind: z.literal("set_board_note"),
       scope: z.enum(["garden", "plot"]),
@@ -108,7 +116,7 @@ const inputSchema = z.strictObject({
 /** @typedef {{id: number, sheltered: boolean, plant: Plant | null, note?: ReturnType<typeof boardNotes>["garden"]}} Plot */
 /** @typedef {{clock: number, revision: number, settingsRevision: number, settings: Settings,
  * balance: number, plots: Plot[], seeds: Record<string, number>, fertilizer: number}} State */
-/** @typedef {{kind: "admin", id: string} | {kind: "agent", id: string, turnId: string}} Actor */
+/** @typedef {{kind: "admin", id: string, generation?:string} | {kind: "agent", id: string, turnId: string, generation?:string}} Actor */
 /** @typedef {ReturnType<typeof inputSchema.parse>["action"]} Action */
 /** @typedef {{id: string, crop_id: string, planted_by: string,
  * quality: import("./garden-rules.mjs").Quality, quantity: number, harvested_at: number, last_use: string | null}} Harvest */
@@ -126,6 +134,28 @@ export class GardenService {
       this.changeBalance.bind(this),
       this.journal,
     );
+    if (!this.db.prepare("SELECT 1 FROM garden_story_presets WHERE id=1").get())
+      store.transaction(() => {
+        const { changes } = this.db
+          .prepare("INSERT OR IGNORE INTO garden_story_presets VALUES (1)")
+          .run();
+        if (!changes) return;
+        const row = this.db
+          .prepare("SELECT settings FROM garden_state WHERE id=1")
+          .get();
+        if (row) {
+          const saved = JSON.parse(String(row.settings));
+          saved.events = withStoryEvents(
+            saved.events ?? legacyEvents,
+            withExpandedCrops(saved.crops),
+          );
+          this.db
+            .prepare(
+              "UPDATE garden_state SET settings=?,settings_revision=settings_revision+1 WHERE id=1",
+            )
+            .run(JSON.stringify(saved));
+        }
+      });
     const state = this.load();
     if (state)
       store.transaction(() => {
@@ -389,6 +419,13 @@ export class GardenService {
    * @param {boolean} running @param {ReturnType<GardenCalendar["events"]["claimVisitor"]>} [claimed] */
   snapshotView(state, current, running, claimed) {
     const notes = boardNotes(this.db);
+    const event = this.calendar.events.view(current.day, state, claimed);
+    const neighbors = this.calendar.neighbors.view(
+      state,
+      current.effectiveWeather.kind,
+    );
+    const nightDay =
+      state.clock % DAY < 6 * HOUR ? current.day - 1 : current.day;
     return {
       ...state,
       plots: state.plots.map((plot) => ({
@@ -397,7 +434,11 @@ export class GardenService {
       })),
       boardNotes: notes,
       rumors: gardenRumors(this.db),
-      event: this.calendar.events.view(current.day, state, claimed),
+      event,
+      storyActions:
+        event?.kind === "choice"
+          ? this.calendar.events.stories.actions(event, state)
+          : [],
       mysterySeeds: this.calendar.events.mysteryStock(),
       fertilizerCredits: this.calendar.events.credits(),
       running,
@@ -406,7 +447,11 @@ export class GardenService {
       weather: current.effectiveWeather,
       weatherForecast: current.weather,
       weatherRevision: current.revision,
-      ...this.calendar.neighbors.view(state, current.effectiveWeather.kind),
+      ...neighbors,
+      fullMoon:
+        neighbors.nightScene.period === "night" &&
+        this.calendar.fullMoon(nightDay),
+      followups: this.calendar.events.stories.view(current.day),
     };
   }
 
@@ -495,6 +540,11 @@ export class GardenService {
     onSurprise,
   ) {
     const { requestId, action } = inputSchema.parse(input);
+    const owner =
+      giftContext?.owner ??
+      (actor.kind === "admin"
+        ? { ...actor, generation: "instance" }
+        : undefined);
     if (action.kind === "set_board_note") {
       if ((action.scope === "plot") !== (action.plot !== undefined))
         throw Error("INVALID_REQUEST");
@@ -505,8 +555,8 @@ export class GardenService {
       .update(
         JSON.stringify(
           canonical(
-            isGiftAction(action)
-              ? { action, generation: giftContext?.owner.generation }
+            isGiftAction(action) || action.kind === "choose_event"
+              ? { action, generation: owner?.generation }
               : action,
           ),
         ),
@@ -601,7 +651,13 @@ export class GardenService {
           now,
         );
       } else {
-        result = this.apply(now, actor, action, state);
+        result = this.apply(
+          now,
+          { ...actor, generation: owner?.generation },
+          action,
+          state,
+          owner,
+        );
       }
       if (
         [
@@ -747,18 +803,26 @@ export class GardenService {
     return { ...surprise, factId: Number(fact?.id) };
   }
 
-  /** @param {number} now @param {Actor} actor @param {Exclude<Action,import("./garden-items.mjs").GiftAction | {kind:"set_board_note"}>} action @param {State} state */
-  apply(now, actor, action, state) {
+  /** @param {number} now @param {Actor} actor @param {Exclude<Action,import("./garden-items.mjs").GiftAction | {kind:"set_board_note"}>} action @param {State} state @param {import("./garden-items.mjs").Owner} [owner] */
+  apply(now, actor, action, state, owner) {
     const rules = state.settings;
     const day = Math.floor(state.clock / DAY) + 1;
     switch (action.kind) {
+      case "choose_event":
       case "buy_mystery_seed":
       case "merchant_buy_fertilizer":
       case "resolve_event":
       case "merchant_buy":
       case "merchant_sell":
       case "chase_thief":
-        return this.calendar.events.perform(day, now, actor, action, state);
+        return this.calendar.events.perform(
+          day,
+          now,
+          actor,
+          action,
+          state,
+          owner,
+        );
       case "buy_seed": {
         const crop = this.getCrop(rules, action.cropId);
         if (!crop.market || !crop.enabled)
@@ -1028,6 +1092,7 @@ export class GardenService {
     this.journal.addPlant(ref, entry.plant, state.clock, actor);
     this.journal.record({
       type: "planted",
+      detail: { actorGeneration: actor.generation },
       clock: state.clock,
       plants: [ref],
       actor,
@@ -1045,7 +1110,7 @@ export class GardenService {
       plants: [gardenPlantRef(plot, plant)],
       actor,
       source: "action",
-      detail,
+      detail: { ...detail, actorGeneration: actor.generation },
     });
   }
 

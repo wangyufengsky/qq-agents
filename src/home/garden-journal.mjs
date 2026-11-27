@@ -152,7 +152,11 @@ function factView(row, publicView) {
     source: String(row.source),
     detail: publicView
       ? publicFactDetail(parse(row.detail))
-      : parse(row.detail),
+      : Object.fromEntries(
+          Object.entries(parse(row.detail)).filter(
+            ([key]) => key !== "actorGeneration",
+          ),
+        ),
     ...(!publicView &&
       row.actor_kind && {
         actor: { kind: String(row.actor_kind), id: String(row.actor_id) },
@@ -635,8 +639,7 @@ export class GardenJournal {
       const { id, type, text, day, plants } = digestFact(row, true);
       if (type === "gift") return { id, type, text };
       const plots = (plants ?? []).map(({ plot }) => plot);
-      const detail =
-        type === "discovery" ? publicFactDetail(parse(row.detail)) : undefined;
+      const detail = publicFactDetail(parse(row.detail));
       return {
         id,
         type,
@@ -649,6 +652,16 @@ export class GardenJournal {
               kind: "neighbor_seed",
               title: `邻株结种：${detail.name}`,
               detail: `花园手帐记录了${plots.map((plot) => `${plot} 号地`).join("与")}的邻株结种。`,
+              factId: id,
+            },
+          }),
+        ...(type === "followup" &&
+          detail.name &&
+          detail.stage && {
+            surprise: {
+              kind: "followup",
+              title: detail.name,
+              detail: detail.stage,
               factId: id,
             },
           }),

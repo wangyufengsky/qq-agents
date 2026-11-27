@@ -177,8 +177,11 @@ test("a direct gift charges once, gives one private paper note, and supports she
 });
 
 test("the expanded gift catalog supports purchasing, gifting and displaying each item", async (t) => {
-  assert.equal(Object.keys(gardenGifts).length, 18);
-  for (const [giftId, { name, price, usable }] of Object.entries(gardenGifts))
+  const soldGifts = Object.entries(gardenGifts).filter(
+    ([, gift]) => !gift.eventOnly,
+  );
+  assert.equal(soldGifts.length, 18);
+  for (const [giftId, { name, price, usable }] of soldGifts)
     await t.test(giftId, (itemTest) => {
       const f = fixture(itemTest, { giftOffers: [{ giftId, stock: 1 }] });
       const { itemId } = f.act(admin, f.buy(giftId, price));

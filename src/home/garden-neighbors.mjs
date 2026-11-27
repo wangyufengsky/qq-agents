@@ -13,7 +13,7 @@ import {
 /** @typedef {ReturnType<import("./garden-service.mjs").GardenService["requireState"]>} State */
 /** @typedef {Omit<State["plots"][number], "plant"> & {plant: import("./garden-rules.mjs").Plant}} PlantedPlot */
 
-const nightStart = 19 * HOUR;
+export const GARDEN_NIGHT_START = 19 * HOUR;
 const nightEnd = 6 * HOUR;
 const minimumAge = 48 * HOUR;
 const recipes = /** @type {const} */ ({
@@ -57,14 +57,14 @@ function pairId(pair) {
     .join(":");
 }
 
-/** @param {string} seed @param {string} lane @param {number} day */
-function trial(seed, lane, day) {
+/** @param {string} seed @param {string} lane @param {number} day @param {number} [chance] */
+function trial(seed, lane, day, chance = 1 / 3) {
   return (
     createHash("sha256")
       .update(JSON.stringify([seed, lane, day]))
       .digest()
       .readUInt32BE() <
-    0x100000000 / 3
+    0x100000000 * chance
   );
 }
 
@@ -101,7 +101,7 @@ export class GardenNeighbors {
   }
 
   /** @param {State} state @param {number} day @param {number} elapsed @param {import("./garden-journal.mjs").GardenJournal} journal
-   * @param {{before:import("./garden-weather.mjs").Weather["kind"],after:import("./garden-weather.mjs").Weather["kind"],boundary:number}} weather */
+   * @param {{before:import("./garden-weather.mjs").Weather["kind"],after:import("./garden-weather.mjs").Weather["kind"],boundary:number,fullMoon?:boolean,previousFullMoon?:boolean}} weather */
   settle(state, day, elapsed, journal, weather) {
     const dawn = (day - 1) * DAY;
     const dayEnd = day * DAY;
@@ -109,8 +109,18 @@ export class GardenNeighbors {
     const daylightEnd = dawn + 17 * HOUR;
     // A dawn window belongs to the night that began the previous day.
     const nightWindows = [
-      { trialDay: day - 1, start: dawn, end: daylightStart },
-      { trialDay: day, start: dawn + nightStart, end: dayEnd },
+      {
+        trialDay: day - 1,
+        start: dawn,
+        end: daylightStart,
+        boosted: weather.previousFullMoon,
+      },
+      {
+        trialDay: day,
+        start: dawn + GARDEN_NIGHT_START,
+        end: dayEnd,
+        boosted: weather.fullMoon,
+      },
     ];
     const sunWindows = [
       {
@@ -141,7 +151,7 @@ export class GardenNeighbors {
 
   /** @param {State} state @param {number} elapsed @param {import("./garden-journal.mjs").GardenJournal} journal
    * @param {string} cropId @param {(typeof recipes)[keyof typeof recipes]} recipe
-   * @param {{trialDay:number,start:number,end:number}[]} windows */
+   * @param {{trialDay:number,start:number,end:number,boosted?:boolean}[]} windows */
   settleRecipe(state, elapsed, journal, cropId, recipe, windows) {
     const pairs = neighborPairs(state, recipe.parents);
     if (!pairs.length || !windows.length) return;
@@ -151,7 +161,7 @@ export class GardenNeighbors {
         cropId === MISTBELL ? pairId(pair) : `${cropId}:${pairId(pair)}`;
       const ready = Math.max(...pair.map(({ plant }) => eligibleSince(plant)));
       let status = this.status(id);
-      for (const { trialDay, start, end } of windows) {
+      for (const { trialDay, start, end, boosted } of windows) {
         const at = Math.max(ready, start);
         if (
           !trialDay ||
@@ -162,7 +172,9 @@ export class GardenNeighbors {
         )
           continue;
         const attempts = Number(status?.attempts ?? 0) + 1;
-        const discovered = Number(attempts === 3 || trial(seed, id, trialDay));
+        const discovered = Number(
+          attempts === 3 || trial(seed, id, trialDay, boosted ? 2 / 3 : 1 / 3),
+        );
         this.db
           .prepare(
             `
@@ -207,7 +219,7 @@ export class GardenNeighbors {
     const day = Math.floor(state.clock / DAY) + 1;
     const hour = state.clock % DAY;
     const period =
-      hour >= nightStart || hour < nightEnd
+      hour >= GARDEN_NIGHT_START || hour < nightEnd
         ? "night"
         : hour >= 17 * HOUR
           ? "dusk"

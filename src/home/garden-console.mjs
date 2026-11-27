@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   careScope,
   defaultGardenSettings,
+  DAY,
   HOUR,
   gardenCropTraits,
   neighborBuffs,
@@ -436,14 +437,23 @@ export function subjectGardenView(
     balance: state.balance,
     scene: {
       ...state.nightScene,
+      fullMoon: state.fullMoon,
       pollenPairs: state.pollenPairs,
     },
     observations,
     highlights: garden.journal.highlights(identity),
     boardNotes: state.boardNotes,
     rumors: state.rumors,
+    followups: state.followups,
     event: event
-      ? { ...event, actions, ...(observation && { observation }) }
+      ? {
+          ...event,
+          ...(event.kind === "choice" && {
+            effect: { kind: "choice", story: event.effect.story },
+          }),
+          actions,
+          ...(observation && { observation }),
+        }
       : null,
     mysterySeeds: state.mysterySeeds,
     mysteryPlantActions: state.mysterySeeds.count
@@ -559,6 +569,9 @@ export function subjectGardenView(
 /** @param {any} runtime @param {string} roleId @param {GardenState} state @param {number} now */
 function gardenObservations(runtime, roleId, state, now) {
   const { event, day, nightScene, pollenPairs } = state;
+  /** @type {import("./garden-service.mjs").GardenService} */
+  const garden = runtime.home.garden;
+  const generation = runtime.home.generation(roleId);
   const moments = [];
   if (
     nightScene.period === "night" &&
@@ -594,8 +607,56 @@ function gardenObservations(runtime, roleId, state, now) {
       title: "邻株间飘起神秘花粉",
       key: `pollen:${day}`,
     });
+  if (
+    event?.kind === "choice" &&
+    event.effect.story === "tea" &&
+    event.status === "resolved"
+  )
+    moments.push({
+      kind: "tea",
+      key: event.id,
+      title: "园中下午茶",
+      body: "你来园时遇上了下午茶，花园里已经泡好了茶。",
+    });
+  if (
+    event?.kind === "story" &&
+    event.effect.story === "fence_note" &&
+    event.target &&
+    garden.calendar.events.stories
+      .carers(event.target.plantId)
+      .some(
+        (carer) =>
+          carer.kind === "agent" &&
+          carer.id === roleId &&
+          carer.generation === generation,
+      )
+  )
+    moments.push({
+      kind: "fence_note",
+      key: event.id,
+      title: "栅栏边的匿名花评",
+      body: `你读到了写给自己参与照料的花的纸条。${event.outcome.detail}`,
+    });
+  if (state.fullMoon) {
+    const nightDay = state.clock % DAY < 6 * HOUR ? day - 1 : day;
+    const fullMoon = garden.calendar.events.get(nightDay);
+    if (fullMoon)
+      moments.push({
+        kind: "full_moon",
+        key: fullMoon.id,
+        title: "满月露台夜",
+        body: "你在小窝花园看到了满月露台夜。",
+      });
+  }
+  for (const followup of state.followups.filter((entry) => entry.day === day))
+    moments.push({
+      kind: "followup",
+      key: `followup:${followup.id}`,
+      title: followup.title,
+      body: `你来园时读到了新的花园回响。${followup.text}`,
+    });
   return moments.map((moment) => {
-    const detail = `你在小窝花园观察了${moment.title}。`;
+    const detail = moment.body ?? `你在小窝花园观察了${moment.title}。`;
     const observation = recordGardenObservation(
       runtime,
       roleId,
@@ -608,7 +669,7 @@ function gardenObservations(runtime, roleId, state, now) {
 
 /** @param {any} runtime @param {string} roleId
  * @param {{kind:string,title:string,key:string,eventId?:string,body?:string}} moment @param {number} now */
-function recordGardenObservation(runtime, roleId, moment, now) {
+export function recordGardenObservation(runtime, roleId, moment, now) {
   const generation = runtime.home.generation(roleId);
   const memory = runtime.memory.bind(roleId);
   const dedupe = `garden-observation:${generation}:${moment.key}`;
@@ -636,6 +697,7 @@ function recordGardenObservation(runtime, roleId, moment, now) {
 export function eventActions(state) {
   const { event } = state;
   if (!event || event.status !== "open") return [];
+  if (event.kind === "choice") return state.storyActions;
   const args = { eventId: event.id };
   if (event.kind === "thief")
     return [{ label: "驱赶小偷", kind: "chase_thief", args }];

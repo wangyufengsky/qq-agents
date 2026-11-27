@@ -135,6 +135,7 @@
     "src/home/garden-rules.mjs",
     "src/home/garden-risks.mjs",
     "src/home/garden-service.mjs",
+    "src/home/garden-stories.mjs",
     "src/home/garden-schema.mjs",
     "src/home/garden-journal.mjs",
     "src/home/garden-journal-console.mjs",
