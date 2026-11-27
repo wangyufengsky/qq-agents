@@ -1043,6 +1043,8 @@ const backendErrors = {
     "Antigravity 模型上下文达到上限，旧会话已退休，本轮不会自动重试。",
   ANTIGRAVITY_PERMISSION:
     "Antigravity 工具或文件读取被拒绝，请按当前回合工具目录重新读取资料。",
+  DSH_CONTEXT_WINDOW_EXCEEDED:
+    "DSH 模型拒绝了超过上下文窗口的请求，本轮不会自动重试。",
   DSH_NOT_FOUND: "未找到 DSH，请先打开桌面应用，再恢复连接。",
   DSH_INSTANCE_UNAVAILABLE:
     "绑定的 DSH 实例尚未就绪。请等待启动完成，或选择其他实例。",

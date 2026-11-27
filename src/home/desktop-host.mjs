@@ -2000,6 +2000,12 @@ export class DesktopHost {
           );
       }
       ctx.desktopRoleMailCurrent = frameScopeCurrent;
+      if (backend.readContextBudget) {
+        ctx.desktopInputImageCount = observationImage
+          ? 1
+          : attachmentInput?.images?.length;
+        await runtime.contexts.loadContextBudget(ctx, backend);
+      }
       exchange = beginDesktopContext(
         runtime,
         ctx,

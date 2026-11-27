@@ -212,6 +212,14 @@ ${selfBody}
   ]
     .filter(Boolean)
     .join("\n\n");
+  if (
+    runtime.contexts.retireBeforeInput(
+      ctx,
+      state,
+      prompt.length + (ctx.desktopInputImageCount || 0) * 4096,
+    )
+  )
+    return beginDesktopContext(runtime, ctx, agent, backend, request, signal);
   Object.assign(ctx, {
     turnId,
     selfVersion: self.version,

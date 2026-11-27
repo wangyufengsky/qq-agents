@@ -19,7 +19,7 @@ import { isDeepStrictEqual } from "node:util";
  * @typedef {{onDisconnect?: (error: Error) => void}} DisconnectHook Assigned by BackendConnections.
  * @typedef {{backend: string, id: string, signature: string, nativeSignature?: string, dshStreamUnverified?: true}} StoredSession
  * @typedef {{name: string, description?: string, inputSchema?: object}} ToolSpec
- * @typedef {{source: string, contextTokens: number, capacityTokens?: number,
+ * @typedef {{source: string, contextTokens: number, capacityTokens?: number, outputReserveTokens?: number | null,
  *   cumulativeTokens?: number, basis: string}} UsageReport
  * @typedef {{eventId: string, index: number, label: string, mediaId?: string, data?: string, mimeType?: string}} InputImage
  * @typedef {Readonly<{provider: string, model: string, effort: string}>} ModelSelection

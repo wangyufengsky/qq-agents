@@ -40,6 +40,16 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
+/** @param {any} records */
+function lastOutputBudget(records) {
+  const header = records?.findLast(
+    (/** @type {any} */ r) => r.event?.type === "request/header",
+  );
+  if (!header) return undefined;
+  const max = header.event.data?.header?.config?.maxTokens;
+  return Number.isSafeInteger(max) && max > 0 ? max : null;
+}
+
 /** @param {any} snapshot */
 function dshInboxEmpty(snapshot) {
   const inbox = snapshot?.projections?.values?.inbox;
@@ -154,6 +164,57 @@ export class DshBackend {
     }
     return unwrap(response, "model catalog");
   }
+  /** @param {StoredSession} session @param {AbortSignal} signal @param {number | null | undefined} previousOutput @param {import("./session-contract.mjs").SessionContract} contract */
+  async readContextBudget(session, signal, previousOutput, contract) {
+    if (!authenticatesSessionContract(this, session, contract)) return null;
+    const client = await this.ready();
+    const result = await client.callUnary(
+      "session/projections",
+      { sessionId: session.id },
+      signal,
+    );
+    const values = result.result.ok && result.result.value?.values;
+    const pressure = values?.contextPressure;
+    if (!pressure) return null;
+    let outputTokens = values.contextTimeline?.maxOutputTokens;
+    if (!values.contextTimeline) {
+      outputTokens = previousOutput;
+      // A retained session can predate bridge-side budget tracking. Its last
+      // resolved request header remains authoritative without optional plugins.
+      let beforeSeq;
+      while (outputTokens === undefined && !signal.aborted) {
+        const page = await client.callUnary(
+          "session/page",
+          {
+            address: { kind: "session", sessionId: session.id },
+            beforeSeq,
+            maxMessages: 32,
+          },
+          signal,
+        );
+        if (!page.result.ok) break;
+        const { records, hasMore } = page.result.value || {};
+        outputTokens = lastOutputBudget(records);
+        const first = records?.[0]?.event?.seq;
+        if (
+          !hasMore ||
+          !Number.isSafeInteger(first) ||
+          (beforeSeq !== undefined && first >= beforeSeq)
+        )
+          break;
+        beforeSeq = first;
+      }
+    }
+    const nonnegative = (/** @type {any} */ n) =>
+      Number.isSafeInteger(n) && n >= 0 ? n : undefined;
+    return {
+      outputTokens: nonnegative(outputTokens) ?? null,
+      capacityTokens: nonnegative(pressure.contextWindow),
+      contextTokens:
+        nonnegative(pressure.projectedTokens) ??
+        nonnegative(pressure.pressureTokens),
+    };
+  }
   async health() {
     const catalog = await this.models();
     const groups = catalog.groups?.filter(
@@ -253,6 +314,12 @@ export class DshBackend {
           p.snapshot?.projections?.values?.contextPressure?.contextWindow;
         if (Number.isFinite(capacity) && capacity > 0)
           this.capacities.set(p.sessionId, capacity);
+        const headerBudget = lastOutputBudget(p.snapshot?.records);
+        const projected =
+          p.snapshot?.projections?.values?.contextTimeline?.maxOutputTokens;
+        if (headerBudget !== undefined) t.outputTokens = headerBudget;
+        else if (Number.isSafeInteger(projected) && projected > 0)
+          t.outputTokens = projected;
         t.followed(p.snapshot);
         if (!t.promptPending) continue;
         const last = lastDshTurnEvent(p.snapshot);
@@ -290,6 +357,11 @@ export class DshBackend {
         e.data.contextWindow > 0
       )
         this.capacities.set(p.sessionId, e.data.contextWindow);
+      if (e.type === "request/header") {
+        const reserve = e.data?.header?.config?.maxTokens;
+        t.outputTokens =
+          Number.isSafeInteger(reserve) && reserve > 0 ? reserve : null;
+      }
       if (e.type === "assistant/message" && e.data?.usage) {
         const u = e.data.usage;
         t.onUsage?.({
@@ -300,6 +372,9 @@ export class DshBackend {
             (u.cacheWriteTokens || 0) +
             u.outputTokens,
           capacityTokens: this.capacities.get(p.sessionId),
+          ...(t.outputTokens !== undefined && {
+            outputReserveTokens: t.outputTokens,
+          }),
           basis:
             "last provider request including disjoint cache counts and output",
         });
@@ -745,7 +820,9 @@ export class DshBackend {
       if (
         !signal.aborted &&
         (e === unverified ||
-          (active.interrupted && e instanceof BackendTurnFailure))
+          (active.interrupted &&
+            e instanceof BackendTurnFailure &&
+            e.category !== "context-limit"))
       ) {
         // A confirmed terminal failure after reattachment still belongs to
         // this native session. Inspect idle state before the next normal wake.
