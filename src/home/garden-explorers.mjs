@@ -67,7 +67,11 @@ export class GardenExplorers {
         event.id,
         mature(state, "balsam").filter(({ plant }) => !plant.podPopped),
       )[0]?.id;
-    if (game.target) game.plantId = state.plots[game.target - 1].plant.id;
+    if (game.target) {
+      const plant = state.plots[game.target - 1].plant;
+      game.plantId = plant.id;
+      game.harvestCount = plant.harvestCount ?? 0;
+    }
     if (story === "snail_map")
       game.route = ranked(event.id, living(state))
         .slice(0, 2)
@@ -124,7 +128,7 @@ export class GardenExplorers {
     const { story } = event.effect;
     if (story === "windmill" || story === "door_peas")
       return visitActions(this.db, event, state, owner);
-    if (event.status !== "open") return [];
+    if (event.status !== "open" && !this.isBoatActive(event, state)) return [];
     const game = event.game ?? {};
     const act = (choiceId, label, description, plot) => ({
       label,
@@ -136,10 +140,17 @@ export class GardenExplorers {
         ...(plot !== undefined && { plot }),
       },
     });
+    const hasOriginalPod = () => {
+      const target = state.plots[game.target - 1]?.plant;
+      return (
+        target?.id === game.plantId &&
+        target?.status === "mature" &&
+        (target.harvestCount ?? 0) === (game.harvestCount ?? 0)
+      );
+    };
     switch (story) {
       case "pea_guess": {
-        const target = state.plots[game.target - 1]?.plant;
-        if (target?.id !== game.plantId) return [];
+        if (!hasOriginalPod()) return [];
         return [
           ...((!game.heard && [
             act("listen", "轻轻听一下", "听豆子碰到壳的声音。"),
@@ -187,7 +198,7 @@ export class GardenExplorers {
         ];
       case "balsam_game": {
         const target = state.plots[game.target - 1]?.plant;
-        return target?.id === game.plantId && !target.podPopped
+        return hasOriginalPod() && !target.podPopped
           ? ["左边", "中间", "右边"].map((label, index) =>
               act(
                 `dish-${["left", "center", "right"][index]}`,
@@ -394,7 +405,7 @@ export class GardenExplorers {
       plots = [leaf.plot];
       plants = game.leaves;
     }
-    event.status = open ? "open" : "resolved";
+    if (!open) event.status = "resolved";
     event.outcome = { detail, ...(plots.length && { plots }) };
     record(
       this.journal,
@@ -467,30 +478,46 @@ export class GardenExplorers {
       }));
   }
 
-  isActive(event) {
-    return visitIsActive(event);
+  isBoatActive(event, state) {
+    const launch = event?.game?.launchClock;
+    return (
+      event?.kind === "explorer" &&
+      event.effect.story === "boot_pond" &&
+      event.status !== "resolved" &&
+      launch !== undefined &&
+      Math.floor(state.clock / DAY) === Math.floor(launch / DAY) + 1
+    );
+  }
+
+  isActive(event, state) {
+    return visitIsActive(event) || this.isBoatActive(event, state);
   }
 
   projects(day, state, owner) {
-    return this.db
+    const packets = this.db
       .prepare(
         `SELECT value FROM garden_events WHERE day<? AND
-      json_extract(value,'$.effect.story')='door_peas' AND
-      json_extract(value,'$.game.packet.taken')=0 ORDER BY day DESC`,
+        json_extract(value,'$.effect.story')='door_peas' AND
+        json_extract(value,'$.game.packet.taken')=0 ORDER BY day DESC`,
       )
       .all(day)
-      .flatMap(({ value }) => {
-        const event = JSON.parse(value);
-        if (!visitIsActive(event)) return [];
-        return [
-          {
-            id: event.id,
-            name: event.name,
-            detail: event.outcome?.detail,
-            actions: this.actions(event, state, owner),
-          },
-        ];
-      });
+      .map(({ value }) => JSON.parse(value));
+    const prior = this.db
+      .prepare("SELECT value FROM garden_events WHERE day=?")
+      .get(day - 1);
+    const boat = prior?.value && JSON.parse(prior.value);
+    return [...(this.isBoatActive(boat, state) ? [boat] : []), ...packets].map(
+      (event) => ({
+        id: event.id,
+        name: event.name,
+        detail:
+          event.effect.story === "boot_pond" &&
+          state.clock >= event.game.launchClock + HOUR
+            ? "叶舟已经从靴口转向靴尖，可以去看看。"
+            : event.outcome?.detail,
+        actions: this.actions(event, state, owner),
+      }),
+    );
   }
 
   settleVisits(state, day, now, weather) {

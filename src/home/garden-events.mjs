@@ -396,7 +396,7 @@ export class GardenEvents {
         this.stories.cancel(entry.id, now);
     }
     if (!entry || entry.status !== "open") return;
-    let outcome;
+    let outcome = entry.kind === "explorer" ? entry.outcome : undefined;
     if (entry.kind === "thief") {
       const lot = this.db
         .prepare(
@@ -530,7 +530,7 @@ export class GardenEvents {
       if (
         project?.id === action.eventId &&
         project.kind === "explorer" &&
-        (sourceDay === day || this.explorers.isActive(project))
+        (sourceDay === day || this.explorers.isActive(project, state))
       ) {
         if (!owner) throw Error("GARDEN_ROLE_UNAVAILABLE");
         const outcome = this.explorers.perform(

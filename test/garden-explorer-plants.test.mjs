@@ -309,3 +309,35 @@ test("morning glory and balsam can be pressed or bundled as two distinct flowers
     ["morning-glory", "balsam"],
   );
 });
+
+for (const [cropId, eventType, choiceId] of [
+  ["rattle-pea", "pea-guess", "listen"],
+  ["balsam", "balsam-dishes", "dish-left"],
+]) {
+  test(`${eventType} cannot use a regrowing or newly ripe pod from the same plant`, (t) => {
+    const f = setup(t, "cloud", (settings) => {
+      settings.crops[cropId].maxHarvests = 2;
+      settings.events.rate = 1;
+      for (const [id, event] of Object.entries(settings.events.entries))
+        event.enabled = id === eventType;
+    });
+    const plantId = f.sow(1, cropId);
+    f.advance(24);
+    const eventId = f.read().event.id;
+    const choices = () => f.overview().event.actions;
+    const choose = () => f.act({ kind: "choose_event", eventId, choiceId });
+    assert.ok(choices().some(({ args }) => args.choiceId === choiceId));
+
+    assert.equal(f.harvest(1, plantId).regrowing, true);
+    assert.equal(f.read().plots[0].plant.status, "growing");
+    assert.deepEqual(choices(), []);
+    assert.throws(choose, /GARDEN_EVENT_CHOICE_INVALID/);
+
+    f.advance(4);
+    assert.equal(f.read().plots[0].plant.id, plantId);
+    assert.equal(f.read().plots[0].plant.status, "mature");
+    assert.deepEqual(choices(), []);
+    assert.throws(choose, /GARDEN_EVENT_CHOICE_INVALID/);
+    assert.equal(f.read().mysterySeeds.count, 0);
+  });
+}

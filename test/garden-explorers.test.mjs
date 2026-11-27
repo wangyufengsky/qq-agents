@@ -292,6 +292,65 @@ test("a leaf boat changes direction only after real garden time, and the later p
   );
 });
 
+test("an unfinished leaf boat retains its launch summary when the day closes", (t) => {
+  const f = setup(t, "boot-pond", { weather: "drizzle" });
+  f.advance(DAY - HOUR / 2);
+  const id = f.view().event.id;
+  const { outcome } = f.choose("launch-boat");
+  f.advance(HOUR / 2);
+  const history = f.view().eventHistory.find((entry) => entry.id === id);
+  assert.equal(history.status, "expired");
+  assert.deepEqual(history.outcome, outcome);
+  assert.equal(history.game, undefined);
+});
+
+test("a late leaf boat can be finished by the launcher or another visitor after midnight and restart", (t) => {
+  for (const observer of [0, 1]) {
+    const f = setup(t, "boot-pond", { weather: "drizzle" });
+    f.advance(DAY - HOUR / 2);
+    const id = f.subject().event.id;
+    f.choose("launch-boat", { actor: f.actors[0] });
+    f.advance(HOUR / 2);
+    f.reopen();
+    const project = (actor) =>
+      f.subject(actor).gardenProjects.find((row) => row.id === id);
+    assert.ok(project(f.actors[0]));
+    assert.deepEqual(project(f.actors[0]).actions, []);
+    assert.ok(
+      project(f.actors[1]).actions.some(
+        ({ args }) => args.choiceId === "watch-boat",
+      ),
+    );
+    f.advance((3 * HOUR) / 4);
+    const old = project(f.actors[observer]);
+    assert.match(old.detail, /转向靴尖/);
+    const { kind, args } = old.actions.find(
+      (action) => action.args.choiceId === "watch-boat",
+    );
+    const result = f.act({ kind, ...args }, f.actors[observer]);
+    assert.match(result.outcome.detail, /转向靴尖/);
+    assert.equal(project(f.actors[observer]), undefined);
+    assert.notEqual(f.subject().event.id, id);
+  }
+});
+
+test("an unattended old boat remains archived after the day after launch", (t) => {
+  const f = setup(t, "boot-pond", { weather: "drizzle" });
+  f.advance(DAY - HOUR / 2);
+  const id = f.subject().event.id;
+  f.choose("launch-boat", { actor: f.actors[0] });
+  f.advance(DAY + HOUR);
+  assert.ok(!f.subject().gardenProjects.some((row) => row.id === id));
+  assert.throws(
+    () =>
+      f.act(
+        { kind: "choose_event", eventId: id, choiceId: "watch-boat" },
+        f.actors[1],
+      ),
+    /GARDEN_EVENT_EXPIRED/,
+  );
+});
+
 test("weather chime preview rolls back a simulated shadow comparison until the exact observed time", (t) => {
   const f = setup(t, "shadow-measure", {
     customize(settings) {

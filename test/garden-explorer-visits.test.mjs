@@ -77,12 +77,29 @@ test("windmill can be placed and moved by different visitors and remembers the a
   };
   const result = f.act(first, pick(initial, 1));
   assert.match(result.outcome.detail, /薄荷/);
+  f.act(second, {
+    kind: "plant",
+    plot: 3,
+    cropId: "mint",
+    buyPrice: f.garden.requireState().settings.crops.mint.seedPrice,
+  });
   f.act(second, pick(f.view(second).event, 3));
   const summary = f.view(first).event.outcome.detail;
   assert.match(summary, /3 号地/);
   assert.ok(summary.includes(f.view(first).weather.name));
   f.reopen();
   assert.equal(f.view(second).event.outcome.detail, summary);
+  f.advance(DAY);
+  const history = adminGardenView(f.runtime).eventHistory.find(
+    ({ id }) => id === initial.id,
+  );
+  assert.equal(history.status, "expired");
+  assert.equal(history.outcome.detail, summary);
+  assert.match(
+    history.outcome.detail,
+    /转得最快的一回在 [13] 号地.*薄荷.*多云/,
+  );
+  assert.equal(history.game, undefined);
 });
 
 test("a real harvested pea packet survives midnight and restart, shares one seed only once and keeps authors private", (t) => {
@@ -109,7 +126,7 @@ test("a real harvested pea packet survives midnight and restart, shares one seed
     event.actions.find((a) => a.args.harvestId === lot.harvestId),
   );
   const requestId = randomUUID();
-  f.act(giver, leave, requestId);
+  const placed = f.act(giver, leave, requestId);
   assert.equal(f.act(giver, leave, requestId).replayed, true);
   assert.equal(
     f.store.db
@@ -127,6 +144,7 @@ test("a real harvested pea packet survives midnight and restart, shares one seed
   f.reopen();
   const project = f.view(visitor).gardenProjects.find((p) => p.id === event.id);
   assert.ok(project);
+  assert.equal(project.detail, placed.outcome.detail);
   assert.equal(JSON.stringify(project).includes("generation"), false);
   f.act(
     visitor,
