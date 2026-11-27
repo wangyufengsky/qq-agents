@@ -28,9 +28,14 @@ let token = sessionStorage.getItem("qq-unified-token") || "",
     initialRecordPage?.get("view") === "memory" &&
     initialRecordPage.get("type") === "diary"
       ? "diary"
-      : ["memory", "diary", "visits", "transcripts", "garden"].includes(
-            initialRecordPage?.get("view"),
-          )
+      : [
+            "memory",
+            "diary",
+            "visits",
+            "transcripts",
+            "garden",
+            "dreams",
+          ].includes(initialRecordPage?.get("view"))
         ? initialRecordPage.get("view")
         : "overview",
   editing,
@@ -41,6 +46,7 @@ const titles = {
   mind: ["Self", "身份锚点、当前 self、成长候选与版本历史。"],
   mood: ["心情", "角色自己记下的当前心情、强度变化和每一次变化的原因。"],
   people: ["人物卡", "角色对每个人的称呼、关系与印象，以及每一版的改动。"],
+  dreams: ["梦境", "查看长期认知、休息时的整理和近期运行。"],
   projects: ["项目与活动", "持续推进的事情、共同原稿与作品历史。"],
   subject: ["空闲时间", "空闲时间的检查状态、日志，以及检查与联系的设置。"],
   intents: ["主动联系", "空闲时间里想主动找人留下的意图，以及最后的结果。"],
@@ -567,6 +573,7 @@ const sections = {
       "memory",
       "diary",
       "visits",
+      "dreams",
       "subject",
       "projects",
       "intents",
@@ -589,6 +596,7 @@ const pageLabels = {
   mood: "心情",
   people: "人物卡",
   subject: "空闲时间",
+  dreams: "梦境",
   projects: "项目与活动",
   intents: "主动联系",
   sessions: "会话状态",
@@ -717,6 +725,10 @@ function render() {
   renderSectionBar(section);
   if (tab === "garden") {
     renderGarden();
+    return;
+  }
+  if (tab === "dreams") {
+    action(renderDreams);
     return;
   }
   if (tab === "transcripts") {

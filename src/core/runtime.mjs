@@ -1,3 +1,4 @@
+import { DreamScheduler } from "../dream/scheduler.mjs";
 import { DreamRunner } from "../dream/runner.mjs";
 import { QzoneApprovals } from "./qzone-approvals.mjs";
 import { SubjectExecution } from "./subject-execution.mjs";
@@ -186,6 +187,7 @@ export class Runtime {
     this.turns = new TurnRunner(this);
     this.functionalDelegation = new FunctionalDelegation(this);
     this.dreams = new DreamRunner(this);
+    this.dreamScheduler = new DreamScheduler(this);
     this.semanticRecall = new SemanticRecall(this);
     this.conversations = new ConversationEngine(this);
     this.scheduler = new TaskScheduler(this);
@@ -324,6 +326,7 @@ export class Runtime {
     this.conversations.tick();
     this.semanticRecall.tick();
     this.scheduler.tick();
+    this.dreamScheduler.tick();
     this.operations.expire();
   }
   makeContext(agentId, conversation, desktop) {

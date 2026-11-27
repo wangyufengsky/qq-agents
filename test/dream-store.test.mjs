@@ -6,6 +6,9 @@ import {
   startDream,
   commitDream,
   recoverDreamRuns,
+  rollbackCognition,
+  deleteCognition,
+  planDreamPatch,
 } from "../src/dream/store.mjs";
 import {
   EXPORT_TABLES,
@@ -134,7 +137,7 @@ test("nonempty targets remap only the exported role's consumed event, diary and 
   );
   assert.deepEqual(
     restored.items.map((item) => item.id),
-    [following.id, entry.id, "correction-following"],
+    ["correction-following", following.id, entry.id],
   );
   assert.equal(restored.cursorStart.events, 5);
   assert.equal(restored.cursorEnd.events, 6);
@@ -277,4 +280,228 @@ test("a correction whose supporting message is outside a batch remains pending",
     batchSize: 1,
   });
   assert.ok(next.items.some(({ id }) => id === "later-correction"));
+});
+
+test("merge, link, archive, score changes and rollback share the transaction and rebuild verified summaries", (t) => {
+  const {
+    runtime,
+    store: { db },
+  } = fixture(t);
+  const memory = runtime.memory.bind(role);
+  const read = (id) =>
+    db.prepare("SELECT * FROM cognitions WHERE id=?").get(id);
+  const first = append(memory, "extended-first");
+  const privateRecord = append(memory, "extended-private", {
+    conversation: "private:30000",
+  });
+  const { snapshot } = startDream(runtime, role, options);
+  commitDream(
+    runtime,
+    snapshot,
+    patch(add([first.id]), {
+      ...add([privateRecord.id]),
+      scopeId: "global",
+      subjectKey: "user:30000:private-tea",
+    }),
+    access(snapshot),
+  );
+  const target = db
+    .prepare("SELECT id FROM cognitions WHERE scope_id=?")
+    .get(group).id;
+  const source = db
+    .prepare("SELECT id FROM cognitions WHERE scope_id='global'")
+    .get().id;
+  let revision = 0;
+  const run = (...operations) => {
+    const event = append(
+      memory,
+      "extended-" + operations[0].op + "-" + ++revision,
+    );
+    const { snapshot } = startDream(runtime, role, options);
+    commitDream(
+      runtime,
+      snapshot,
+      patch(
+        ...operations.map((operation) =>
+          "evidenceIds" in operation
+            ? { ...operation, evidenceIds: [event.id] }
+            : operation,
+        ),
+      ),
+      access(snapshot),
+    );
+  };
+  run({
+    op: "LINK",
+    fromId: target,
+    toId: source,
+    relation: "related_to",
+    reason: "相同主题",
+  });
+  assert.equal(
+    db.prepare("SELECT relation FROM cognition_links").get().relation,
+    "related_to",
+  );
+  run({
+    op: "MERGE",
+    targetId: target,
+    sourceIds: [source],
+    expectedVersion: 1,
+    evidenceIds: [],
+    content: "从两处经历归纳出的偏好。",
+    reason: "内容重叠",
+  });
+  assert.equal(read(source).status, "archived");
+  assert.equal(read(source).merged_into, target);
+  assert.equal(read(target).from_private, 1);
+  assert.equal(
+    db
+      .prepare("SELECT summary FROM awakening_contexts WHERE scope_id=?")
+      .get(group).summary,
+    "从两处经历归纳出的偏好。",
+  );
+  run({
+    op: "REINFORCE",
+    targetId: target,
+    expectedVersion: 2,
+    evidenceIds: [],
+    reason: "又一次明确提及",
+  });
+  assert.ok(read(target).confidence > 0.8);
+  const reinforced = read(target).confidence;
+  run({
+    op: "REINFORCE",
+    targetId: target,
+    expectedVersion: 3,
+    evidenceIds: [],
+    confidence: 0,
+    reason: "方向相反的建议",
+  });
+  assert.equal(read(target).confidence, reinforced);
+  run({
+    op: "WEAKEN",
+    targetId: target,
+    expectedVersion: 4,
+    evidenceIds: [],
+    reason: "出现新的反例",
+  });
+  assert.equal(read(target).status, "disputed");
+  assert.ok(read(target).confidence < reinforced);
+  assert.equal(
+    db
+      .prepare("SELECT summary FROM awakening_contexts WHERE scope_id=?")
+      .get(group),
+    undefined,
+  );
+  assert.equal(
+    db
+      .prepare(
+        "SELECT relation FROM cognition_evidence WHERE cognition_id=? AND cognition_version=5 AND relation='contradicts'",
+      )
+      .get(target).relation,
+    "contradicts",
+  );
+  const restored = rollbackCognition(runtime, role, target, {
+    version: 2,
+    expectedVersion: 5,
+  });
+  assert.equal(restored.version, 6);
+  assert.equal(restored.status, "active");
+  assert.equal(
+    db
+      .prepare(
+        "SELECT op FROM cognition_revisions WHERE cognition_id=? AND version=6",
+      )
+      .get(target).op,
+    "ROLLBACK",
+  );
+  run({
+    op: "ARCHIVE",
+    targetId: target,
+    expectedVersion: 6,
+    reason: "已过时",
+  });
+  assert.equal(read(target).status, "archived");
+  assert.ok(read(target).valid_to);
+  assert.throws(
+    () => deleteCognition(runtime, role, target, 6),
+    /DREAM_VERSION_CONFLICT/,
+  );
+  assert.equal(deleteCognition(runtime, role, target, 7).deleted, true);
+  assert.equal(
+    db.prepare("SELECT count(*) AS n FROM cognition_links").get().n,
+    0,
+  );
+  assert.equal(
+    db
+      .prepare(
+        "SELECT count(*) AS n FROM cognition_revisions WHERE cognition_id=?",
+      )
+      .get(target).n,
+    0,
+  );
+  assert.equal(
+    db.prepare("SELECT count(*) AS n FROM events WHERE id=?").get(first.id).n,
+    1,
+  );
+});
+
+test("a merge or reinforcement cannot carry forward evidence whose protection changed after planning", (t) => {
+  const {
+    runtime,
+    store: { db },
+  } = fixture(t);
+  const memory = runtime.memory.bind(role);
+  const old = append(memory, "will-revoke");
+  const other = append(memory, "will-remain");
+  const { snapshot } = startDream(runtime, role, options);
+  commitDream(
+    runtime,
+    snapshot,
+    patch(add([old.id]), { ...add([other.id]), subjectKey: "other:tea" }),
+    access(snapshot),
+  );
+  const target = db
+    .prepare("SELECT id FROM cognitions WHERE subject_key='user:30000:tea'")
+    .get().id;
+  const source = db
+    .prepare("SELECT id FROM cognitions WHERE subject_key='other:tea'")
+    .get().id;
+  const next = append(memory, "new-safe");
+  const { snapshot: followup } = startDream(runtime, role, options);
+  const proposals = [
+    {
+      op: "MERGE",
+      targetId: target,
+      sourceIds: [source],
+      expectedVersion: 1,
+      content: "合并",
+      evidenceIds: [next.id],
+      reason: "合并",
+    },
+    {
+      op: "REINFORCE",
+      targetId: target,
+      expectedVersion: 1,
+      evidenceIds: [next.id],
+      reason: "再次确认",
+    },
+  ];
+  for (const op of proposals)
+    assert.doesNotThrow(() =>
+      planDreamPatch(runtime, followup, patch(op), access(followup)),
+    );
+  db.prepare("UPDATE events SET payload=? WHERE id=?").run(
+    JSON.stringify({ protectedOperations: true }),
+    old.id,
+  );
+  for (const op of proposals)
+    assert.throws(
+      () => commitDream(runtime, followup, patch(op), access(followup)),
+      /RECALL_SOURCE_NOT_ALLOWED/,
+    );
+  assert.equal(
+    db.prepare("SELECT count(*) AS n FROM cognitions WHERE version=1").get().n,
+    2,
+  );
 });

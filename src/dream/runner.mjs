@@ -1,8 +1,10 @@
 // @ts-check
+import { dreamDaily, dreamPaused } from "./scheduler.mjs";
 import { setImmediate } from "node:timers/promises";
 import { randomBytes, randomUUID } from "node:crypto";
 import { resolveFunctionalAgent } from "../core/functional-agents.mjs";
 import { resolveFunctionalContract } from "../core/functional-contracts.mjs";
+import { prepared } from "../core/recall-boundary.mjs";
 import { knownErrorCodes } from "../core/error-codes.mjs";
 import { DREAM_LIST, DREAM_SUBMIT } from "../tools/names.mjs";
 import {
@@ -20,12 +22,15 @@ import {
   visibleCognitionEvidence,
 } from "./store.mjs";
 
+/** @typedef {{signal?:AbortSignal,idempotencyKey?:string,mode?:"nap"|"deep",trigger?:"manual"|"idle"|"rhythm-sleep"|"rest",queuedId?:string}} RunOptions */
 /** @typedef {import("./store.mjs").Snapshot} Snapshot */
 /** @typedef {import("./source-filter.mjs").DreamSource} Source */
 
 export class DreamRunner {
   /** @type {Map<string, object>} */
   #active = new Map();
+  /** @type {Map<string,{id:string,mode:"nap"|"deep"}>} */
+  #manual = new Map();
   /** @type {WeakMap<object, {snapshot:Snapshot,patch?:unknown}>} */
   #invocations = new WeakMap();
 
@@ -35,13 +40,119 @@ export class DreamRunner {
     recoverDreamRuns(runtime.memory.db, runtime.now());
   }
 
-  /** @param {string} agentId @param {{signal?:AbortSignal,idempotencyKey?:string}} [options] */
+  /** @param {string} agentId */
+  busy(agentId) {
+    return this.#active.has(agentId) || this.#manual.has(agentId);
+  }
+
+  get concurrency() {
+    return Math.min(
+      ...this.runtime.config.agents
+        .filter(
+          (/** @type {any} */ role) =>
+            role.dream.enabled && role.dream.cognitive.enabled,
+        )
+        .map(
+          (/** @type {any} */ role) => role.dream.budget.maxGlobalConcurrency,
+        ),
+    );
+  }
+
+  /** @param {string} agentId @param {"nap"|"deep"} mode */
+  trigger(agentId, mode) {
+    const runtime = this.runtime,
+      role = runtime.agent(agentId),
+      db = runtime.memory.db;
+    if (
+      !role.dream.enabled ||
+      !role.dream.cognitive.enabled ||
+      dreamPaused(runtime, role)
+    )
+      throw Error("DREAM_DISABLED");
+    const blockers = runtime.blockers(role, "@dream", {
+      runtimeKind: "dream-cognitive",
+    });
+    if (blockers.length) throw Error(blockers[0]);
+    if (this.busy(agentId)) throw Error("DREAM_ALREADY_RUNNING");
+    if (dreamDaily(runtime, role).used >= role.dream.budget.maxRunsPerDay)
+      throw Error("DREAM_BUDGET_EXCEEDED");
+    const id = randomUUID(),
+      time = new Date(runtime.now()).toISOString();
+    prepared(
+      db,
+      `INSERT INTO dream_runs(run_id,agent_id,mode,trigger,idempotency_key,status,snapshot_version,cursor_start,cursor_end,prompt_version,created_at)
+      VALUES(?,?,?,'manual',?,'QUEUED',0,0,0,'1',?)`,
+    ).run(id, agentId, mode, id, time);
+    this.#manual.set(agentId, { id, mode });
+    this.drainManual();
+    return {
+      runId: id,
+      status: prepared(db, "SELECT status FROM dream_runs WHERE run_id=?").get(
+        id,
+      )?.status,
+    };
+  }
+
+  /** @param {string} agentId */
+  pause(agentId) {
+    const runtime = this.runtime;
+    const pending = this.#manual.get(agentId);
+    if (pending) {
+      this.#manual.delete(agentId);
+      failDream(
+        runtime.memory.db,
+        pending.id,
+        "CANCELLED",
+        "DREAM_DISABLED",
+        runtime.now(),
+      );
+    }
+    for (const ctx of runtime.capabilities.values())
+      if (ctx.runtimeKind === "dream-cognitive" && ctx.agentId === agentId)
+        ctx.controller.abort(Error("DREAM_DISABLED"));
+  }
+
+  drainManual() {
+    const runtime = this.runtime;
+    if (
+      runtime.closed ||
+      runtime.maintenance.active ||
+      runtime.config.globalPaused ||
+      runtime.config.mode !== "live"
+    )
+      return;
+    for (const [agentId, pending] of this.#manual) {
+      if (this.#active.size >= this.concurrency) break;
+      this.#manual.delete(agentId);
+      void this.run(agentId, {
+        mode: pending.mode,
+        queuedId: pending.id,
+      }).catch((/** @type {unknown} */ error) => {
+        const code =
+          error instanceof Error && knownErrorCodes.has(error.message)
+            ? error.message
+            : "DREAM_INTERRUPTED";
+        failDream(
+          runtime.memory.db,
+          pending.id,
+          "CANCELLED",
+          code,
+          runtime.now(),
+        );
+      });
+    }
+  }
+
+  /** @param {string} agentId @param {RunOptions} [options] */
   run(agentId, options) {
     return this.runtime.trackWork(this.execute(agentId, options));
   }
 
-  /** @param {string} agentId @param {{signal?:AbortSignal,idempotencyKey?:string}} [options] */
-  async execute(agentId, { signal, idempotencyKey } = {}) {
+  /** @param {string} agentId @param {RunOptions} [options] */
+  async execute(
+    agentId,
+    { signal, idempotencyKey, mode = "nap", trigger = "manual", queuedId } = {},
+  ) {
     const runtime = this.runtime;
     const role = runtime.agent(agentId);
     const profile = resolveFunctionalAgent(
@@ -59,6 +170,7 @@ export class DreamRunner {
       controller.signal.throwIfAborted();
       if (Date.now() >= deadline) throw Error("DREAM_INTERRUPTED");
       if (config !== runtime.config) throw Error("DREAM_INTERRUPTED");
+      if (dreamPaused(runtime, role)) throw Error("DREAM_DISABLED");
       const blockers = runtime.blockers(role, "@dream", ctx);
       if (blockers.length) throw Error(blockers[0]);
     };
@@ -81,12 +193,29 @@ export class DreamRunner {
     };
     signal?.throwIfAborted();
     current();
-    if (this.#active.has(agentId)) throw Error("DREAM_ALREADY_RUNNING");
+    if (mode !== "nap" && mode !== "deep") throw Error("DREAM_MODE_MISMATCH");
+    if (this.busy(agentId)) throw Error("DREAM_ALREADY_RUNNING");
+    if (idempotencyKey) {
+      const previous = prepared(
+        runtime.memory.db,
+        "SELECT run_id,status FROM dream_runs WHERE agent_id=? AND idempotency_key=?",
+      ).get(agentId, idempotencyKey);
+      if (previous) return { status: previous.status, runId: previous.run_id };
+    }
+    if (
+      this.#active.size >= this.concurrency ||
+      (!queuedId && this.#manual.size > 0) ||
+      dreamDaily(runtime, role).used >= role.dream.budget.maxRunsPerDay
+    )
+      throw Error("DREAM_BUDGET_EXCEEDED");
     const { previous, snapshot } = startDream(runtime, agentId, {
       backendId: definition.backendId,
       model: definition.model,
       batchSize: role.dream.cognitive.maxEventsPerBatch,
       idempotencyKey,
+      mode,
+      trigger,
+      queuedId,
     });
     if (previous) return { status: previous.status, runId: previous.run_id };
     const invocation = { snapshot, patch: /** @type {unknown} */ (undefined) };
@@ -125,6 +254,28 @@ export class DreamRunner {
         const contract = resolveFunctionalContract(profile);
         await adapter.run({
           ...contract.createExchange(runtime, ctx, { profile, snapshot }),
+          onUsage: (
+            /** @type {{source:string,contextTokens:number,cumulativeTokens?:number}} */ usage,
+          ) => {
+            if (
+              controller.signal.aborted ||
+              !["measured", "estimated"].includes(usage.source) ||
+              !Number.isFinite(usage.contextTokens) ||
+              usage.contextTokens < 0
+            )
+              return;
+            const current = {
+              source: usage.source,
+              contextTokens: usage.contextTokens,
+              ...(Number.isFinite(usage.cumulativeTokens) && {
+                cumulativeTokens: usage.cumulativeTokens,
+              }),
+            };
+            prepared(
+              runtime.memory.db,
+              "UPDATE dream_runs SET usage_json=? WHERE run_id=? AND status='RUNNING'",
+            ).run(JSON.stringify(current), snapshot.runId);
+          },
           signal: controller.signal,
           ...(lease && { modelSelection: lease.modelSelection }),
         });
@@ -133,9 +284,10 @@ export class DreamRunner {
         else await adapter.close?.();
       }
     };
-    const native = runtime
-      .trackWork(execute())
-      .finally(() => this.#active.delete(agentId));
+    const native = runtime.trackWork(execute()).finally(() => {
+      this.#active.delete(agentId);
+      this.drainManual();
+    });
     try {
       await Promise.race([native, stopped]);
       current();
@@ -146,7 +298,8 @@ export class DreamRunner {
         error instanceof Error && knownErrorCodes.has(error.message)
           ? error.message
           : "DREAM_INTERRUPTED";
-      const status = signal?.aborted ? "CANCELLED" : "FAILED";
+      const status =
+        signal?.aborted || dreamPaused(runtime, role) ? "CANCELLED" : "FAILED";
       failDream(runtime.memory.db, snapshot.runId, status, code, runtime.now());
       return { status, runId: snapshot.runId, errorCode: code };
     } finally {

@@ -12,11 +12,15 @@
 
 ### 认知梦
 
-每个角色通过 `agents[].dream.enabled` 开启梦境，默认关闭。当前阶段由运行时调用认知梦，自动调度和管理台入口在后续阶段接入。每次运行使用一次性模型会话整理这个角色的经历。它通过 `dream_cognition_list` 核对已有认知，通过 `dream_cognition_submit` 提议新增或更新。聊天和桌面回合只在参考资料中收到相关认知及后续修订。引用私聊经历的认知带有 `fromPrivate` 提示。
+每个角色通过 `agents[].dream.enabled` 开启梦境，默认关闭。开启后，认知梦在独立的一次性模型会话里整理该角色的经历。新纠正优先进入本轮资料。模型通过 `dream_cognition_list` 查阅已有认知，通过 `dream_cognition_submit` 提议新增、更新、合并、关联、归档、强化或弱化。QQ 和桌面聊天按版本接收相关认知，跨私聊引用带有 `fromPrivate` 提示。
 
 可用 `dream.backendId` 指定模型后端。留空时，如果只有一个专用后端（`functionalAgentOnly: true`）且已配置提供方和模型，梦境使用它。其他情况使用角色主后端。`dream.cognitive.model`、`dream.cognitive.effort` 分别覆盖角色的 `dream.model`、`dream.effort`，仍留空的字段继承所选后端。梦境配置和认知版本的变化保留现有聊天会话。
 
 `dream.cognitive.maxEventsPerBatch` 默认 120，`maxOpsPerRun` 默认 20，`timeoutMs` 默认 60000 毫秒。一次有效的空提交通知框架这批经历已整理完。失败批次保留原检查点，供后续运行读取。
+
+小憩默认要求角色空闲 15 分钟（`dream.cognitive.napIdleMs`），并积累 20 条可用新事件（`napMinEvents`）。有新纠正时，达到空闲时长即可整理。`deepDaily` 默认开启，有待整理资料时，角色进入作息睡眠或自主休息满 10 分钟后可做深度整理。未启用作息时按空闲时长触发。单个角色同时只能做一个梦。多个角色共用并发槽，`dream.budget.maxGlobalConcurrency` 默认 2，开启的角色设置了不同上限时取其中最小值。`maxRunsPerDay` 默认每角色每日 6 次。隔离模式、全局暂停和角色暂停均会阻止启动。
+
+在管理台选择「角色 → 梦境」可查看模型后端、今日预算和待整理资料，手动触发小憩或深度睡眠。并发槽满时，手动请求会排队等候。展开认知可检查证据、查看版本并回滚，回滚会生成新版本。彻底删除会清除该条认知的版本。运行记录显示最近 20 次整理的结果。
 
 ### QQ 会话记忆查证
 

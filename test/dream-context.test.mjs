@@ -89,6 +89,7 @@ test("QQ delivers new versions incrementally and dream configuration retains the
   await wake();
   assert.match(seen[1].prompt, /喜欢听钢琴/);
   assert.match(seen[1].prompt, /"fromPrivate":true/);
+  assert.match(seen[1].prompt, /醒来摘要.*fromPrivate/);
   assert.equal(seen[1].session.id, nativeSession.id);
   assert.equal(seen[1].instructions, seen[0].instructions);
   assert.deepEqual(seen[1].tools, seen[0].tools);
@@ -314,6 +315,7 @@ test("QQ and desktop omit stale cognitions at native input while delivering the 
         }
         assert.doesNotMatch(delivered, /喜欢听钢琴|修订后的偏好/);
         assert.match(delivered, /喜欢阅读散文/);
+        assert.doesNotMatch(delivered, /醒来摘要/);
         assert.deepEqual(memory.state(scope).cognitionsShown, { [valid]: 1 });
         assert.ok(
           !memory.state(scope).disclosureTaint.includes(staleSource.id),

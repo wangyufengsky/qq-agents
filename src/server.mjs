@@ -1,3 +1,4 @@
+import { dreamAdmin } from "./dream/admin.mjs";
 import { DESKTOP_SCREEN_VIEW } from "./tools/names.mjs";
 import { MAX_DESKTOP_CAPTURE_WIRE_BYTES } from "./home/desktop-capture-protocol.mjs";
 import { MAX_DESKTOP_ATTACHMENT_BODY } from "./home/desktop-attachments.mjs";
@@ -276,6 +277,7 @@ export function createServer({
             "/document-reader.js",
             "/apps-ui.js",
             "/mind-ui.js",
+            "/dream-ui.js",
             "/session-transcripts-ui.js",
             "/session-transcripts.css",
             "/projects-ui.js",
@@ -700,6 +702,15 @@ export function createServer({
       }
       if (!downloadAgentId && !equal(req.headers["x-admin-token"], token))
         return deny("UNAUTHORIZED", 401);
+      if (url.pathname.startsWith("/api/dreams/")) {
+        const { result, status } = await dreamAdmin(
+          runtime,
+          req.method,
+          url,
+          readBody,
+        );
+        return send(result, status);
+      }
       if (url.pathname.startsWith("/api/home-social/")) {
         const auth = "instance-administrator";
         const service = runtime.homeSocial || runtime.home?.social;

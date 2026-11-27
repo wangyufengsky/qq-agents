@@ -17,7 +17,7 @@ import { parsePatch, validateEvidence } from "./validator.mjs";
 /** @typedef {import("node:sqlite").DatabaseSync} Database */
 
 /** @param {Database} db @param {string} agentId */
-function checkpoint(db, agentId) {
+export function checkpoint(db, agentId) {
   const starts = { events: 0, diaries: 0, corrections: 0 };
   let version = 0;
   const rows = prepared(
@@ -34,11 +34,19 @@ function checkpoint(db, agentId) {
   return { starts, version };
 }
 
-/** @param {any} runtime @param {string} agentId @param {{backendId:string,model:string,batchSize:number,idempotencyKey?:string}} options */
+/** @param {any} runtime @param {string} agentId @param {{backendId:string,model:string,batchSize:number,idempotencyKey?:string,mode?:string,trigger?:string,queuedId?:string}} options */
 export function startDream(
   runtime,
   agentId,
-  { backendId, model, batchSize, idempotencyKey = randomUUID() },
+  {
+    backendId,
+    model,
+    batchSize,
+    idempotencyKey = randomUUID(),
+    mode = "nap",
+    trigger = "manual",
+    queuedId,
+  },
 ) {
   const store = runtime.memory,
     db = store.db;
@@ -81,33 +89,54 @@ export function startDream(
         if (row.item) items.push(row.item);
       }
     }
-    const runId = randomUUID(),
+    const runId = queuedId ?? randomUUID(),
       time = new Date(runtime.now()).toISOString();
-    prepared(
-      db,
-      `INSERT INTO dream_runs (
-      run_id,agent_id,mode,trigger,idempotency_key,status,snapshot_version,cursor_start,cursor_end,
-      backend_id,model,prompt_version,attempts,created_at,started_at
-    ) VALUES(?,?,'nap','manual',?,'RUNNING',?,?,?,?,?,'1',1,?,?)`,
-    ).run(
-      runId,
-      agentId,
-      idempotencyKey,
-      version,
-      starts.events,
-      cursorEnd.events,
-      backendId,
-      model,
-      time,
-      time,
-    );
+    if (queuedId) {
+      const result = prepared(
+        db,
+        `UPDATE dream_runs SET status='RUNNING',snapshot_version=?,cursor_start=?,cursor_end=?,
+        backend_id=?,model=?,attempts=1,started_at=? WHERE run_id=? AND agent_id=? AND status='QUEUED'`,
+      ).run(
+        version,
+        starts.events,
+        cursorEnd.events,
+        backendId,
+        model,
+        time,
+        runId,
+        agentId,
+      );
+      if (result.changes !== 1) throw Error("DREAM_INTERRUPTED");
+    } else {
+      prepared(
+        db,
+        `INSERT INTO dream_runs (run_id,agent_id,mode,trigger,idempotency_key,status,snapshot_version,cursor_start,cursor_end,
+        backend_id,model,prompt_version,attempts,created_at,started_at) VALUES(?,?,?,?,?,'RUNNING',?,?,?,?,?,'1',1,?,?)`,
+      ).run(
+        runId,
+        agentId,
+        mode,
+        trigger,
+        idempotencyKey,
+        version,
+        starts.events,
+        cursorEnd.events,
+        backendId,
+        model,
+        time,
+        time,
+      );
+    }
     const snapshot = {
       runId,
       agentId,
       cursorStart: starts,
       cursorEnd,
       snapshotVersion: version,
-      items,
+      items: items.sort(
+        (a, b) =>
+          Number(b.type === "correction") - Number(a.type === "correction"),
+      ),
     };
     return { snapshot };
   });
@@ -168,57 +197,127 @@ export function planDreamPatch(runtime, snapshot, input, access) {
       cursorEnd,
     );
   const changes = [],
+    links = [],
     keys = new Set(),
     targets = new Set();
   const time = new Date(runtime.now()).toISOString();
+  const lookup = (/** @type {string} */ id) => {
+    const row = /** @type {Cognition|undefined} */ (
+      prepared(
+        db,
+        "SELECT * FROM cognitions WHERE agent_id=? AND id=? AND status<>'archived'",
+      ).get(agentId, id)
+    );
+    if (!row) throw Error("DREAM_VERSION_CONFLICT");
+    return row;
+  };
+  const reserve = (/** @type {Cognition} */ row) => {
+    if (targets.has(row.id)) throw Error("DREAM_VERSION_CONFLICT");
+    targets.add(row.id);
+  };
   for (const op of patch.operations) {
-    const before =
-      op.op === "UPDATE"
-        ? /** @type {Cognition|undefined} */ (
-            prepared(
-              db,
-              "SELECT * FROM cognitions WHERE agent_id=? AND id=? AND status<>'archived'",
-            ).get(agentId, op.targetId)
-          )
-        : undefined;
+    if (op.op === "LINK") {
+      const from = lookup(op.fromId),
+        to = lookup(op.toId);
+      if (from.id === to.id || !compatible(from, to))
+        throw Error("DREAM_SCOPE_VIOLATION");
+      if (
+        !visibleCognitionEvidence(db, from, read) ||
+        !visibleCognitionEvidence(db, to, read)
+      )
+        throw Error("RECALL_SOURCE_NOT_ALLOWED");
+      links.push({
+        ...op,
+        scope: from.scope_id === "global" ? to.scope_id : from.scope_id,
+      });
+      continue;
+    }
+    const before = op.op === "ADD" ? undefined : lookup(op.targetId);
     if (
-      op.op === "UPDATE" &&
-      (!before ||
-        before.version !== op.expectedVersion ||
-        targets.has(op.targetId))
+      before &&
+      "expectedVersion" in op &&
+      before.version !== op.expectedVersion
     )
       throw Error("DREAM_VERSION_CONFLICT");
-    if (before) targets.add(before.id);
+    if (before) reserve(before);
+    if (op.op === "ARCHIVE" && before) {
+      changes.push({
+        op: op.op,
+        reason: op.reason,
+        before,
+        after: archived(before, time),
+        evidence: storedEvidence(db, before),
+      });
+      continue;
+    }
     const scope = op.op === "ADD" ? op.scopeId : before?.scope_id;
     const category = op.op === "ADD" ? op.category : before?.category;
-    if (!scope || !category) throw Error("DREAM_INVALID_PATCH");
+    if (!scope || !category || !("evidenceIds" in op))
+      throw Error("DREAM_INVALID_PATCH");
     if (op.op === "ADD") {
-      const key = JSON.stringify([op.scopeId, op.subjectKey]);
-      if (
-        keys.has(key) ||
-        prepared(
-          db,
-          "SELECT 1 FROM cognitions WHERE agent_id=? AND scope_id=? AND subject_key=? AND status='active'",
-        ).get(agentId, op.scopeId, op.subjectKey)
-      )
+      const key = JSON.stringify([scope, op.subjectKey]);
+      if (keys.has(key) || duplicate(db, agentId, scope, op.subjectKey))
         throw Error("DREAM_DUPLICATE_SUBJECT_KEY");
       keys.add(key);
     }
+    if (
+      op.op === "MERGE" &&
+      before &&
+      !visibleCognitionEvidence(db, before, read)
+    )
+      throw Error("RECALL_SOURCE_NOT_ALLOWED");
+    const merged =
+      op.op === "MERGE" ? [...new Set(op.sourceIds)].map(lookup) : [];
+    for (const item of merged) {
+      if (!before || !compatible(before, item))
+        throw Error("DREAM_SCOPE_VIOLATION");
+      reserve(item);
+      if (!visibleCognitionEvidence(db, item, read))
+        throw Error("RECALL_SOURCE_NOT_ALLOWED");
+      changes.push({
+        op: op.op,
+        reason: op.reason,
+        before: item,
+        after: archived(item, time, before.id),
+        evidence: storedEvidence(db, item),
+      });
+    }
+    const changedStatus =
+      "epistemicStatus" in op ? op.epistemicStatus : undefined;
+    const status =
+      op.op === "WEAKEN"
+        ? "disputed"
+        : (changedStatus ?? before?.epistemic_status ?? "reported");
     const { sources, scopes } = validateEvidence(
-      op,
+      {
+        evidenceIds: op.evidenceIds,
+        epistemicStatus: changedStatus ?? "reported",
+      },
       scope,
       category,
       read,
       access.privateRead,
       access.fingerprints,
     );
-    if (before)
-      for (const sourceScope of JSON.parse(before.source_scopes_json))
-        scopes.add(sourceScope);
-    const fromPrivate = Number(
-      Boolean(before?.from_private) ||
-        [...scopes].some((s) => s.startsWith("private:")),
-    );
+    const predecessors = before ? [before, ...merged] : merged;
+    for (const item of predecessors)
+      for (const priorScope of JSON.parse(item.source_scopes_json))
+        scopes.add(priorScope);
+    let importance =
+      ("importance" in op ? op.importance : undefined) ??
+      before?.importance ??
+      0;
+    let confidence =
+      ("confidence" in op ? op.confidence : undefined) ??
+      before?.confidence ??
+      0;
+    if (before && (op.op === "REINFORCE" || op.op === "WEAKEN")) {
+      const direction = op.op === "REINFORCE" ? 1 : -1;
+      if (!visibleCognitionEvidence(db, before, read))
+        throw Error("RECALL_SOURCE_NOT_ALLOWED");
+      importance = adjust(op.importance, before.importance, direction);
+      confidence = adjust(op.confidence, before.confidence, direction);
+    }
     /** @type {Cognition} */
     const after = {
       id: before?.id ?? randomUUID(),
@@ -227,13 +326,16 @@ export function planDreamPatch(runtime, snapshot, input, access) {
       category,
       subject_key:
         op.op === "ADD" ? op.subjectKey : (before?.subject_key ?? ""),
-      content: op.content,
-      epistemic_status: op.epistemicStatus,
-      importance: op.importance ?? before?.importance ?? 0,
-      confidence: op.confidence ?? before?.confidence ?? 0,
-      status: "active",
+      content: "content" in op ? op.content : (before?.content ?? ""),
+      epistemic_status: status,
+      importance,
+      confidence,
+      status: status === "disputed" ? "disputed" : "active",
       version: (before?.version ?? 0) + 1,
-      from_private: fromPrivate,
+      from_private: Number(
+        predecessors.some((item) => item.from_private) ||
+          [...scopes].some((item) => item.startsWith("private:")),
+      ),
       source_scopes_json: JSON.stringify([...scopes].sort()),
       merged_into: null,
       valid_from: before?.valid_from ?? time,
@@ -241,9 +343,172 @@ export function planDreamPatch(runtime, snapshot, input, access) {
       created_at: before?.created_at ?? time,
       updated_at: time,
     };
-    changes.push({ op, before, after, sources });
+    /** @type {Map<string, Evidence>} */
+    const evidence = new Map();
+    if (["REINFORCE", "WEAKEN", "MERGE"].includes(op.op))
+      for (const item of predecessors)
+        for (const source of storedEvidence(db, item))
+          evidence.set(source.source_id, source);
+    for (const source of sources)
+      evidence.set(source.id, {
+        source_id: source.id,
+        source_type: source.type,
+        scope_id: source.scopeId,
+        relation:
+          op.op === "WEAKEN"
+            ? "contradicts"
+            : source.type === "correction" && op.op === "UPDATE"
+              ? "supersedes"
+              : "supports",
+      });
+    if (
+      before &&
+      before.status !== "active" &&
+      after.status === "active" &&
+      (keys.has(JSON.stringify([scope, after.subject_key])) ||
+        duplicate(db, agentId, scope, after.subject_key))
+    )
+      throw Error("DREAM_DUPLICATE_SUBJECT_KEY");
+    keys.add(JSON.stringify([scope, after.subject_key]));
+    changes.push({
+      op: op.op,
+      reason: op.reason,
+      before,
+      after,
+      evidence: [...evidence.values()],
+    });
   }
-  return { changes, time };
+  return { changes, links, time };
+}
+
+/** @param {Cognition} a @param {Cognition} b */
+function compatible(a, b) {
+  return (
+    a.scope_id === b.scope_id ||
+    a.scope_id === "global" ||
+    b.scope_id === "global"
+  );
+}
+
+/** @param {number|undefined} requested @param {number} previous @param {number} direction */
+function adjust(requested, previous, direction) {
+  const wanted = requested ?? previous + direction * 0.1;
+  return direction > 0
+    ? Math.max(previous, Math.min(1, previous + 0.2, wanted))
+    : Math.min(previous, Math.max(0, previous - 0.2, wanted));
+}
+
+/** @param {Database} db @param {string} agentId @param {string} scope @param {string} key */
+function duplicate(db, agentId, scope, key) {
+  return prepared(
+    db,
+    "SELECT 1 FROM cognitions WHERE agent_id=? AND scope_id=? AND subject_key=? AND status='active'",
+  ).get(agentId, scope, key);
+}
+
+/** @param {Cognition} row @param {string} time @param {string|null} [mergedInto] @returns {Cognition} */
+function archived(row, time, mergedInto = null) {
+  return {
+    ...row,
+    status: "archived",
+    version: row.version + 1,
+    merged_into: mergedInto,
+    valid_to: time,
+    updated_at: time,
+  };
+}
+
+/** @typedef {{source_id:string,source_type:string,scope_id:string,relation:string}} Evidence */
+/** @param {Database} db @param {Cognition} row */
+function storedEvidence(db, row) {
+  return /** @type {Evidence[]} */ (
+    prepared(
+      db,
+      "SELECT source_id,source_type,scope_id,relation FROM cognition_evidence WHERE agent_id=? AND cognition_id=? AND cognition_version=? ORDER BY source_id",
+    ).all(row.agent_id, row.id, row.version)
+  );
+}
+
+/** @param {Database} db @param {{op:string,reason:string,before?:Cognition,after:Cognition,evidence:Evidence[]}} change @param {string} time @param {string|null} runId */
+function writeCognition(
+  db,
+  { op, reason, before, after, evidence },
+  time,
+  runId,
+) {
+  const { agent_id: agentId, id, version } = after;
+  if (before) {
+    const result = prepared(
+      db,
+      `UPDATE cognitions SET content=?,epistemic_status=?,importance=?,confidence=?,status=?,version=?,from_private=?,source_scopes_json=?,merged_into=?,valid_to=?,updated_at=? WHERE agent_id=? AND id=? AND version=?`,
+    ).run(
+      after.content,
+      after.epistemic_status,
+      after.importance,
+      after.confidence,
+      after.status,
+      version,
+      after.from_private,
+      after.source_scopes_json,
+      after.merged_into,
+      after.valid_to,
+      time,
+      agentId,
+      id,
+      before.version,
+    );
+    if (result.changes !== 1) throw Error("DREAM_VERSION_CONFLICT");
+  } else {
+    prepared(
+      db,
+      "INSERT INTO cognitions VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+    ).run(
+      id,
+      agentId,
+      after.scope_id,
+      after.category,
+      after.subject_key,
+      after.content,
+      after.epistemic_status,
+      after.importance,
+      after.confidence,
+      after.status,
+      version,
+      after.from_private,
+      after.source_scopes_json,
+      after.merged_into,
+      after.valid_from,
+      after.valid_to,
+      after.created_at,
+      time,
+    );
+  }
+  prepared(
+    db,
+    "INSERT INTO cognition_revisions VALUES(?,?,?,?,?,?,?,?,?,?)",
+  ).run(
+    agentId,
+    id,
+    version,
+    op,
+    before ? JSON.stringify(before) : null,
+    JSON.stringify(after),
+    runId,
+    runId ? "dream-cognitive" : "admin",
+    reason,
+    time,
+  );
+  for (const source of evidence)
+    prepared(db, "INSERT INTO cognition_evidence VALUES(?,?,?,?,?,?,?,?)").run(
+      agentId,
+      id,
+      version,
+      source.source_id,
+      source.source_type,
+      source.scope_id,
+      source.relation,
+      time,
+    );
 }
 
 /** @param {Scope["runtime"]} runtime @param {Snapshot} snapshot @param {unknown} input @param {Parameters<typeof planDreamPatch>[3]} access */
@@ -264,106 +529,36 @@ export function commitDream(runtime, snapshot, input, access) {
       "SELECT 1 FROM dream_runs WHERE run_id=? AND agent_id=? AND status='RUNNING'",
     ).get(runId, agentId);
     if (!run) throw Error("DREAM_INTERRUPTED");
-    const { changes, time } = planDreamPatch(runtime, snapshot, input, access);
-    for (const { op, before, after, sources } of changes) {
-      if (before) {
-        const result = prepared(
-          db,
-          `UPDATE cognitions SET content=?,epistemic_status=?,importance=?,confidence=?,
-          status=?,version=?,from_private=?,source_scopes_json=?,updated_at=? WHERE agent_id=? AND id=? AND version=?`,
-        ).run(
-          after.content,
-          after.epistemic_status,
-          after.importance,
-          after.confidence,
-          after.status,
-          after.version,
-          after.from_private,
-          after.source_scopes_json,
-          after.updated_at,
-          agentId,
-          after.id,
-          before.version,
-        );
-        if (result.changes !== 1) throw Error("DREAM_VERSION_CONFLICT");
-      } else {
+    const { changes, links, time } = planDreamPatch(
+      runtime,
+      snapshot,
+      input,
+      access,
+    );
+    for (const change of changes) writeCognition(db, change, time, runId);
+    let changesCount = changes.length;
+    for (const link of links)
+      changesCount += Number(
         prepared(
           db,
-          `INSERT INTO cognitions
-          (id,agent_id,scope_id,category,subject_key,content,epistemic_status,importance,confidence,
-          status,version,from_private,source_scopes_json,merged_into,valid_from,valid_to,created_at,updated_at)
-          VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-        ).run(
-          after.id,
-          agentId,
-          after.scope_id,
-          after.category,
-          after.subject_key,
-          after.content,
-          after.epistemic_status,
-          after.importance,
-          after.confidence,
-          after.status,
-          after.version,
-          after.from_private,
-          after.source_scopes_json,
-          after.merged_into,
-          after.valid_from,
-          after.valid_to,
-          after.created_at,
-          after.updated_at,
-        );
-      }
-      prepared(
-        db,
-        "INSERT INTO cognition_revisions VALUES(?,?,?,?,?,?,?,?,?,?)",
-      ).run(
-        agentId,
-        after.id,
-        after.version,
-        op.op,
-        before ? JSON.stringify(before) : null,
-        JSON.stringify(after),
-        runId,
-        "dream-cognitive",
-        op.reason,
-        time,
+          "INSERT OR IGNORE INTO cognition_links VALUES(?,?,?,?,?,?)",
+        ).run(agentId, link.fromId, link.toId, link.relation, link.scope, time)
+          .changes,
       );
-      for (const source of sources)
-        prepared(
-          db,
-          "INSERT INTO cognition_evidence VALUES(?,?,?,?,?,?,?,?)",
-        ).run(
-          agentId,
-          after.id,
-          after.version,
-          source.id,
-          source.type,
-          source.scopeId,
-          source.type === "correction" && op.op === "UPDATE"
-            ? "supersedes"
-            : "supports",
-          time,
-        );
-    }
+    const version = snapshotVersion + Number(changesCount > 0);
+    if (changesCount) rebuildAwakening(runtime, agentId, version, time);
     for (const partition of SOURCE_PARTITIONS)
       prepared(
         db,
         `INSERT INTO dream_checkpoints (agent_id,source_partition,last_event_seq,cognition_version,updated_at)
         VALUES(?,?,?,?,?) ON CONFLICT(agent_id,source_partition) DO UPDATE SET
         last_event_seq=excluded.last_event_seq,cognition_version=excluded.cognition_version,updated_at=excluded.updated_at`,
-      ).run(
-        agentId,
-        partition,
-        cursorEnd[partition],
-        snapshotVersion + Number(changes.length > 0),
-        time,
-      );
+      ).run(agentId, partition, cursorEnd[partition], version, time);
     prepared(
       db,
       "UPDATE dream_runs SET status='COMMITTED',changes_count=?,finished_at=? WHERE run_id=?",
-    ).run(changes.length, time, runId);
-    return { status: "COMMITTED", runId, changesCount: changes.length };
+    ).run(changesCount, time, runId);
+    return { status: "COMMITTED", runId, changesCount };
   });
 }
 
@@ -371,7 +566,7 @@ export function commitDream(runtime, snapshot, input, access) {
 export function failDream(db, runId, status, code, now) {
   prepared(
     db,
-    "UPDATE dream_runs SET status=?,error_code=?,finished_at=? WHERE run_id=? AND status IN ('RUNNING','VALIDATING')",
+    "UPDATE dream_runs SET status=?,error_code=?,finished_at=? WHERE run_id=? AND status IN ('QUEUED','RUNNING','VALIDATING')",
   ).run(status, code, new Date(now).toISOString(), runId);
 }
 
@@ -379,6 +574,171 @@ export function failDream(db, runId, status, code, now) {
 export function recoverDreamRuns(db, now) {
   prepared(
     db,
-    "UPDATE dream_runs SET status='FAILED',error_code='DREAM_INTERRUPTED',finished_at=? WHERE status IN ('RUNNING','VALIDATING')",
+    "UPDATE dream_runs SET status='FAILED',error_code='DREAM_INTERRUPTED',finished_at=? WHERE status IN ('QUEUED','RUNNING','VALIDATING')",
   ).run(new Date(now).toISOString());
+}
+
+const allSources = {
+  events: Number.MAX_SAFE_INTEGER,
+  diaries: Number.MAX_SAFE_INTEGER,
+  corrections: Number.MAX_SAFE_INTEGER,
+};
+
+/** @param {any} runtime @param {string} agentId @param {number} version @param {string} time */
+function rebuildAwakening(runtime, agentId, version, time) {
+  const db = runtime.memory.db,
+    max = runtime.agent(agentId).dream.budget.awakeningSummaryChars;
+  prepared(db, "DELETE FROM awakening_contexts WHERE agent_id=?").run(agentId);
+  if (!max) return;
+  const { read } = dreamSources(
+    runtime,
+    { agentId, conversation: "@dream" },
+    allSources,
+  );
+  const rows = /** @type {Iterable<Cognition>} */ (
+    prepared(
+      db,
+      "SELECT * FROM cognitions WHERE agent_id=? AND status='active' ORDER BY importance DESC,updated_at DESC,id",
+    ).iterate(agentId)
+  );
+  /** @type {Map<string,{summary:string,refs:{id:string,version:number}[]}>} */
+  const summaries = new Map();
+  for (const row of rows) {
+    if (!visibleCognitionEvidence(db, row, read)) continue;
+    const entry = summaries.get(row.scope_id) ?? { summary: "", refs: [] };
+    const line = (entry.summary ? "\n" : "") + row.content;
+    if (entry.summary.length + line.length > max) continue;
+    entry.summary += line;
+    entry.refs.push({ id: row.id, version: row.version });
+    summaries.set(row.scope_id, entry);
+  }
+  for (const [scope, entry] of summaries)
+    prepared(db, "INSERT INTO awakening_contexts VALUES(?,?,?,?,?,?)").run(
+      agentId,
+      scope,
+      version,
+      entry.summary,
+      JSON.stringify(entry.refs),
+      time,
+    );
+}
+
+/** @param {any} runtime @param {string} agentId @param {string} id @param {{version:number,expectedVersion:number}} args */
+export function rollbackCognition(
+  runtime,
+  agentId,
+  id,
+  { version, expectedVersion },
+) {
+  const { db } = runtime.memory;
+  return runtime.memory.transaction(() => {
+    const before = /** @type {Cognition|undefined} */ (
+      prepared(db, "SELECT * FROM cognitions WHERE agent_id=? AND id=?").get(
+        agentId,
+        id,
+      )
+    );
+    if (!before || before.version !== expectedVersion)
+      throw Error("DREAM_VERSION_CONFLICT");
+    const historical = prepared(
+      db,
+      "SELECT after_json FROM cognition_revisions WHERE agent_id=? AND cognition_id=? AND version=?",
+    ).get(agentId, id, version);
+    if (!historical) throw Error("DREAM_ROLLBACK_FAILED");
+    const original = /** @type {Cognition} */ (
+      JSON.parse(String(historical.after_json))
+    );
+    const { read } = dreamSources(
+      runtime,
+      { agentId, conversation: "@dream" },
+      allSources,
+    );
+    if (!visibleCognitionEvidence(db, original, read))
+      throw Error("DREAM_ROLLBACK_FAILED");
+    if (
+      before.status !== "active" &&
+      original.status === "active" &&
+      duplicate(db, agentId, before.scope_id, before.subject_key)
+    )
+      throw Error("DREAM_DUPLICATE_SUBJECT_KEY");
+    const time = new Date(runtime.now()).toISOString();
+    const after = {
+      ...original,
+      id,
+      agent_id: agentId,
+      version: expectedVersion + 1,
+      updated_at: time,
+      from_private: Number(
+        Boolean(before.from_private || original.from_private),
+      ),
+      source_scopes_json: JSON.stringify(
+        [
+          ...new Set([
+            ...JSON.parse(before.source_scopes_json),
+            ...JSON.parse(original.source_scopes_json),
+          ]),
+        ].sort(),
+      ),
+    };
+    writeCognition(
+      db,
+      {
+        op: "ROLLBACK",
+        reason: `Rollback to version ${version}`,
+        before,
+        after,
+        evidence: storedEvidence(db, original),
+      },
+      time,
+      null,
+    );
+    refreshAfterAdminChange(runtime, agentId, time);
+    return after;
+  });
+}
+
+/** @param {any} runtime @param {string} agentId @param {string} id @param {number} expectedVersion */
+export function deleteCognition(runtime, agentId, id, expectedVersion) {
+  const { db } = runtime.memory;
+  return runtime.memory.transaction(() => {
+    if (
+      prepared(
+        db,
+        "DELETE FROM cognitions WHERE agent_id=? AND id=? AND version=?",
+      ).run(agentId, id, expectedVersion).changes !== 1
+    )
+      throw Error("DREAM_VERSION_CONFLICT");
+    for (const table of ["cognition_evidence", "cognition_revisions"])
+      prepared(
+        db,
+        `DELETE FROM ${table} WHERE agent_id=? AND cognition_id=?`,
+      ).run(agentId, id);
+    prepared(
+      db,
+      "DELETE FROM cognition_links WHERE agent_id=? AND (from_id=? OR to_id=?)",
+    ).run(agentId, id, id);
+    prepared(
+      db,
+      "UPDATE cognitions SET merged_into=NULL WHERE agent_id=? AND merged_into=?",
+    ).run(agentId, id);
+    refreshAfterAdminChange(
+      runtime,
+      agentId,
+      new Date(runtime.now()).toISOString(),
+    );
+    return { id, deleted: true };
+  });
+}
+
+/** @param {any} runtime @param {string} agentId @param {string} time */
+function refreshAfterAdminChange(runtime, agentId, time) {
+  const { db } = runtime.memory,
+    { version, starts } = checkpoint(db, agentId);
+  for (const partition of SOURCE_PARTITIONS)
+    prepared(
+      db,
+      `INSERT INTO dream_checkpoints(agent_id,source_partition,last_event_seq,cognition_version,updated_at)
+    VALUES(?,?,?,?,?) ON CONFLICT(agent_id,source_partition) DO UPDATE SET cognition_version=excluded.cognition_version,updated_at=excluded.updated_at`,
+    ).run(agentId, partition, starts[partition], version + 1, time);
+  rebuildAwakening(runtime, agentId, version + 1, time);
 }

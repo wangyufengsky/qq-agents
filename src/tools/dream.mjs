@@ -20,7 +20,7 @@ export const dreamDefinitions = {
     }),
   ],
   [DREAM_SUBMIT]: [
-    "提交本次认知巩固补丁，支持 ADD 与 UPDATE。仅引用实际展示过的本轮安全证据；无变更时传空 operations 及非空 noChangesReason。校验失败可在本轮修正。accepted 表示当前提议通过校验，框架会在模型回合正常结束后复查来源和版本并原子提交。",
+    "提交本次认知巩固补丁，支持 ADD、UPDATE、MERGE、LINK、ARCHIVE、REINFORCE、WEAKEN。REINFORCE 和 WEAKEN 可请求微调分数，每次最多 0.2。仅引用实际展示过的本轮安全证据；无变更时传空 operations 及非空 noChangesReason。校验失败可在本轮修正。accepted 表示当前提议通过校验，框架会在模型回合正常结束后复查来源和版本并原子提交。",
     cognitionPatch,
   ],
 };
