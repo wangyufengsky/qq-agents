@@ -280,7 +280,7 @@ try {
   const scopes = configuredScopes();
   db = new DatabaseSync(database, { readOnly: action === "preview" });
   const schema = db.prepare("PRAGMA user_version").get().user_version;
-  if (![INPUT_SCHEMA_VERSION, DREAM_SCHEMA_VERSION].includes(schema))
+  if (![INPUT_SCHEMA_VERSION, 9, DREAM_SCHEMA_VERSION].includes(schema))
     throw Error("INPUT_BASELINE_UPGRADED_COPY_REQUIRED");
   db.exec(
     action === "preview"

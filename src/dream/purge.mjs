@@ -1,11 +1,16 @@
 // @ts-check
+import { reconcileCognitionProvenance } from "./store.mjs";
+import { dreamEventParents } from "./provenance.mjs";
 
 /** @param {import("node:sqlite").DatabaseSync} db */
 export function initializeDreamPurge(db) {
   // Diary-to-diary references can be ordered by revision rowid, including
   // same-millisecond writes. Other records use their stored reference time.
   const dependencyClosure = `sources(id,since_at,until_at,seq,until_seq,revision) AS (
-    SELECT NEW.source_id,NULL,NULL,NULL,NULL,NULL WHERE NEW.source_type<>'cognition'
+    SELECT NEW.source_id,r.written_at,next.written_at,r.seq,next.seq,NEW.source_revision
+    FROM (SELECT 1) LEFT JOIN diary_revisions r ON r.id=NEW.source_id AND r.revision=NEW.source_revision
+    LEFT JOIN diary_revisions next ON next.id=r.id AND next.revision=r.revision+1
+    WHERE NEW.source_type<>'cognition'
     UNION
     SELECT d.source_id,CASE WHEN d.seq IS NOT NULL THEN d.used_at END,d.until_at,d.seq,d.until_seq,d.revision
     FROM sources s JOIN dream_source_dependencies d
@@ -19,11 +24,11 @@ export function initializeDreamPurge(db) {
     END
   )`;
   db.exec(`
+    ${dreamEventParents};
     CREATE VIEW IF NOT EXISTS dream_source_dependencies(
       agent_id,source_id,parent_id,used_at,until_at,seq,until_seq,revision,parent_revision
     ) AS
-    SELECT agent_id,id,json_extract(payload,'$.sourceEventId'),observed_at,NULL,NULL,NULL,NULL,NULL FROM events
-    WHERE json_type(payload,'$.sourceEventId')='text'
+    SELECT agent_id,id,parent_id,NULL,NULL,NULL,NULL,NULL,NULL FROM dream_event_parents
     UNION ALL
     SELECT d.agent_id,d.id,parent.value,r.written_at,next.written_at,r.rowid,next.rowid,r.revision,NULL
     FROM diaries d JOIN diary_revisions r ON r.id=d.id
@@ -39,10 +44,15 @@ export function initializeDreamPurge(db) {
     SELECT c.agent_id,c.id,json_extract(target.value,'$.id'),json_extract(c.value,'$.createdAt'),NULL,NULL,NULL,NULL,
       CASE WHEN json_extract(target.value,'$.type')='diary' THEN NULLIF(json_extract(target.value,'$.revision'),0) END
     FROM memory_corrections c JOIN json_each(c.value,'$.targets') target
-    WHERE json_extract(target.value,'$.type') IN ('event','diary');
+    WHERE json_extract(target.value,'$.type') IN ('event','diary')
+    UNION ALL
+    SELECT c.agent_id,c.id,json_extract(ref.value,'$.id'),json_extract(c.value,'$.createdAt'),NULL,NULL,NULL,NULL,
+      nullif(json_extract(ref.value,'$.revision'),0)
+    FROM memory_corrections c JOIN json_each(c.value,'$.targets') target JOIN json_each(target.value,'$.provenance.refs') ref
+    WHERE json_extract(ref.value,'$.id') NOT LIKE 'context:%';
 
-    CREATE VIEW IF NOT EXISTS dream_privacy_purge(agent_id,source_id,source_type) AS
-    SELECT NULL,NULL,NULL WHERE 0;
+    CREATE VIEW IF NOT EXISTS dream_privacy_purge(agent_id,source_id,source_type,source_revision) AS
+    SELECT NULL,NULL,NULL,NULL WHERE 0;
 
     CREATE TRIGGER IF NOT EXISTS dream_privacy_purge_apply
     INSTEAD OF INSERT ON dream_privacy_purge BEGIN
@@ -56,8 +66,7 @@ export function initializeDreamPurge(db) {
           SELECT e.cognition_id,e.cognition_version FROM cognition_evidence e
           JOIN sources s ON e.source_id=s.id
           WHERE e.agent_id=NEW.agent_id AND (s.id<>NEW.source_id OR e.source_type=NEW.source_type)
-          AND (s.since_at IS NULL OR s.since_at<=e.created_at)
-          AND (s.until_at IS NULL OR e.created_at<=s.until_at)
+          AND (s.revision IS NULL OR e.source_revision=0 OR s.revision=e.source_revision)
           UNION
           SELECT cognition_id,version FROM cognition_revisions
           WHERE agent_id=NEW.agent_id AND cognition_id=NEW.source_id AND NEW.source_type='cognition'
@@ -99,7 +108,7 @@ export function initializeDreamPurge(db) {
       -- Carry surviving source references forward without vouching for the
       -- deleted synthesis or its unsupported source scopes.
       INSERT INTO cognition_evidence
-      SELECT e.agent_id,e.cognition_id,e.cognition_version+1,e.source_id,e.source_type,e.scope_id,e.relation,e.created_at
+      SELECT e.agent_id,e.cognition_id,e.cognition_version+1,e.source_id,e.source_type,e.scope_id,e.relation,e.created_at,e.source_revision
       FROM cognition_evidence e JOIN cognitions c ON c.agent_id=e.agent_id AND c.id=e.cognition_id
         AND c.version=e.cognition_version
       JOIN cognition_revisions r ON r.agent_id=c.agent_id AND r.cognition_id=c.id AND r.version=c.version
@@ -107,8 +116,7 @@ export function initializeDreamPurge(db) {
       AND NOT EXISTS (
         WITH RECURSIVE ${dependencyClosure}
         SELECT 1 FROM sources s WHERE s.id=e.source_id
-          AND (s.since_at IS NULL OR s.since_at<=e.created_at)
-          AND (s.until_at IS NULL OR e.created_at<=s.until_at)
+          AND (s.revision IS NULL OR e.source_revision=0 OR s.revision=e.source_revision)
       );
 
       UPDATE cognitions SET version=version+1,content='',subject_key='purged:'||id,
@@ -164,20 +172,24 @@ export function initializeDreamPurge(db) {
       DELETE FROM event_links WHERE source_seq=OLD.seq;
       DELETE FROM message_aliases WHERE event_id=OLD.id;
       DELETE FROM message_observations WHERE event_id=OLD.id;
-      INSERT INTO dream_privacy_purge VALUES(OLD.agent_id,OLD.id,'event');
+      INSERT INTO dream_privacy_purge VALUES(OLD.agent_id,OLD.id,'event',NULL);
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS dream_privacy_diary_revision_delete BEFORE DELETE ON diary_revisions BEGIN
+      INSERT INTO dream_privacy_purge SELECT agent_id,OLD.id,'diary',OLD.revision FROM diaries WHERE id=OLD.id;
     END;
 
     CREATE TRIGGER IF NOT EXISTS dream_privacy_diary_delete AFTER DELETE ON diaries BEGIN
       DELETE FROM diary_revisions WHERE id=OLD.id;
-      INSERT INTO dream_privacy_purge VALUES(OLD.agent_id,OLD.id,'diary');
+      INSERT INTO dream_privacy_purge VALUES(OLD.agent_id,OLD.id,'diary',NULL);
     END;
 
     CREATE TRIGGER IF NOT EXISTS dream_privacy_correction_delete AFTER DELETE ON memory_corrections BEGIN
-      INSERT INTO dream_privacy_purge VALUES(OLD.agent_id,OLD.id,'correction');
+      INSERT INTO dream_privacy_purge VALUES(OLD.agent_id,OLD.id,'correction',NULL);
     END;
 
     CREATE TRIGGER IF NOT EXISTS dream_privacy_cognition_delete AFTER DELETE ON cognitions BEGIN
-      INSERT INTO dream_privacy_purge VALUES(OLD.agent_id,OLD.id,'cognition');
+      INSERT INTO dream_privacy_purge VALUES(OLD.agent_id,OLD.id,'cognition',NULL);
       DELETE FROM cognition_evidence WHERE agent_id=OLD.agent_id AND cognition_id=OLD.id;
       DELETE FROM cognition_revisions WHERE agent_id=OLD.agent_id AND cognition_id=OLD.id;
       UPDATE cognitions SET merged_into=NULL WHERE agent_id=OLD.agent_id AND merged_into=OLD.id;
@@ -187,8 +199,14 @@ export function initializeDreamPurge(db) {
 
 // Older exports can contain references to a source deleted before the
 // SQLite triggers existed. Apply the same redaction after all rows load.
-/** @param {import("node:sqlite").DatabaseSync} db @param {string} agentId */
-export function reconcileDreamPurges(db, agentId) {
+/** @param {any} memory */
+export function reconcileDreamPurges(memory) {
+  const { db, agentId } = memory;
+  memory.corrections.reconcileDreamTargets();
+  db.prepare(
+    `UPDATE cognition_evidence SET source_revision=1 WHERE agent_id=? AND source_type='diary' AND source_revision=0 AND EXISTS (
+    SELECT 1 FROM diaries d WHERE d.agent_id=? AND d.id=cognition_evidence.source_id AND d.revision=1)`,
+  ).run(agentId, agentId);
   if (
     !db
       .prepare("SELECT 1 FROM cognition_evidence WHERE agent_id=? LIMIT 1")
@@ -197,21 +215,23 @@ export function reconcileDreamPurges(db, agentId) {
     return;
   const missing = db
     .prepare(
-      `SELECT DISTINCT source_id,source_type FROM cognition_evidence e WHERE agent_id=? AND (
+      `SELECT DISTINCT source_id,source_type,NULLIF(source_revision,0) AS revision FROM cognition_evidence e WHERE agent_id=? AND (
       (source_type='event' AND NOT EXISTS(SELECT 1 FROM events WHERE agent_id=e.agent_id AND id=e.source_id))
       OR (source_type='diary' AND NOT EXISTS(SELECT 1 FROM diaries WHERE agent_id=e.agent_id AND id=e.source_id))
+      OR (source_type='diary' AND source_revision>0 AND NOT EXISTS(SELECT 1 FROM diary_revisions WHERE id=e.source_id AND revision=e.source_revision))
       OR (source_type='correction' AND NOT EXISTS(SELECT 1 FROM memory_corrections WHERE agent_id=e.agent_id AND id=e.source_id))
     )
     UNION
-    SELECT d.parent_id,'unknown' FROM dream_source_dependencies d
+    SELECT d.parent_id,'unknown',NULL FROM dream_source_dependencies d
     WHERE d.agent_id=? AND d.parent_id IS NOT NULL AND NOT EXISTS (
       SELECT 1 FROM events WHERE agent_id=d.agent_id AND id=d.parent_id
       UNION ALL
       SELECT 1 FROM diaries WHERE agent_id=d.agent_id AND id=d.parent_id
-    )`,
+    ) UNION SELECT parent_id,'diary',parent_revision FROM dream_source_dependencies d WHERE agent_id=? AND parent_revision>0 AND NOT EXISTS(SELECT 1 FROM diary_revisions WHERE id=d.parent_id AND revision=d.parent_revision)`,
     )
-    .all(agentId, agentId);
-  const purge = db.prepare("INSERT INTO dream_privacy_purge VALUES(?,?,?)");
-  for (const { source_id, source_type } of missing)
-    purge.run(agentId, source_id, source_type);
+    .all(agentId, agentId, agentId);
+  const purge = db.prepare("INSERT INTO dream_privacy_purge VALUES(?,?,?,?)");
+  for (const { source_id, source_type, revision } of missing)
+    purge.run(agentId, source_id, source_type, revision);
+  reconcileCognitionProvenance(memory);
 }

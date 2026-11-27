@@ -1,6 +1,6 @@
 // @ts-check
 
-export const DREAM_SCHEMA_VERSION = 9;
+export const DREAM_SCHEMA_VERSION = 10;
 export const DREAM_TABLES = [
   "cognitions",
   "cognition_evidence",
@@ -50,7 +50,8 @@ export function initializeDreamTables(db) {
       scope_id TEXT NOT NULL,
       relation TEXT NOT NULL,
       created_at TEXT NOT NULL,
-      PRIMARY KEY (agent_id, cognition_id, cognition_version, source_id)
+      source_revision INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (agent_id, cognition_id, cognition_version, source_id,source_revision)
     );
     CREATE INDEX IF NOT EXISTS cognition_evidence_source
       ON cognition_evidence(agent_id, source_id);
@@ -148,6 +149,62 @@ export function initializeDreamTables(db) {
       PRIMARY KEY (agent_id, scope_id)
     );
   `);
+}
+
+/** @param {import("node:sqlite").DatabaseSync} db */
+export function upgradeDreamProvenance(db) {
+  // Remove views referencing the old tables before replacing them in this transaction.
+  for (const name of [
+    "purge_apply",
+    "diary_revision_delete",
+    "event_delete",
+    "diary_delete",
+    "correction_delete",
+    "cognition_delete",
+  ])
+    db.exec("DROP TRIGGER IF EXISTS dream_privacy_" + name);
+  db.exec(
+    "DROP VIEW IF EXISTS dream_privacy_purge; DROP VIEW IF EXISTS dream_source_dependencies; DROP VIEW IF EXISTS dream_event_parents",
+  );
+  const hasColumn = (
+    /** @type {string} */ table,
+    /** @type {string} */ column,
+  ) =>
+    db
+      .prepare(`SELECT 1 FROM pragma_table_info(?) WHERE name=?`)
+      .get(table, column);
+  for (const [table, partition, definition, columns] of [
+    [
+      "diary_revisions",
+      "diaries",
+      "id TEXT NOT NULL REFERENCES diaries(id),revision INTEGER NOT NULL,title TEXT NOT NULL,body TEXT NOT NULL,metadata TEXT NOT NULL,written_at TEXT NOT NULL,UNIQUE(id,revision)",
+      "id,revision,title,body,metadata,written_at",
+    ],
+    [
+      "memory_corrections",
+      "corrections",
+      "agent_id TEXT NOT NULL,id TEXT NOT NULL,value TEXT NOT NULL,UNIQUE(agent_id,id)",
+      "agent_id,id,value",
+    ],
+  ]) {
+    if (hasColumn(table, "seq")) continue;
+    db.exec(`CREATE TABLE ${table}_new(seq INTEGER PRIMARY KEY AUTOINCREMENT,${definition});
+      INSERT INTO ${table}_new SELECT rowid,${columns} FROM ${table};
+      DROP TABLE ${table}; ALTER TABLE ${table}_new RENAME TO ${table};`);
+    // A previous deletion may already have left a consumed position above MAX(rowid).
+    db.prepare(
+      "UPDATE sqlite_sequence SET seq=max(seq,coalesce((SELECT max(last_event_seq) FROM dream_checkpoints WHERE source_partition=?),0)) WHERE name=?",
+    ).run(partition, table);
+  }
+  if (!hasColumn("cognition_evidence", "source_revision")) {
+    db.exec(
+      "ALTER TABLE cognition_evidence RENAME TO legacy_cognition_evidence; DROP INDEX cognition_evidence_source",
+    );
+    initializeDreamTables(db);
+    db.exec(
+      "INSERT INTO cognition_evidence SELECT *,0 FROM legacy_cognition_evidence; DROP TABLE legacy_cognition_evidence",
+    );
+  }
 }
 
 // Role exports preserve source order and translate SQLite rowids into positions.

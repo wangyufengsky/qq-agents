@@ -67,7 +67,7 @@ function cognitionOpening(runtime, ctx, { fresh, personIds = [] }) {
   // its last supporting source was erased. No deleted material is projected.
   const purgeRevision = prepared(
     db,
-    "SELECT 1 FROM cognition_revisions WHERE agent_id=? AND cognition_id=? AND version=? AND op='PURGE_REBUILD'",
+    "SELECT 1 FROM cognition_revisions WHERE agent_id=? AND cognition_id=? AND version=? AND op IN ('PURGE_REBUILD','CORRECTION_SUPERSEDED','EVIDENCE_REVISION_UNKNOWN')",
   );
   const purged = (/** @type {Cognition} */ row) =>
     row.status === "disputed" &&
@@ -127,9 +127,13 @@ function cognitionOpening(runtime, ctx, { fresh, personIds = [] }) {
     const fingerprints = new Map();
     const evidence = purged(row)
       ? []
-      : visibleCognitionEvidence(db, row, (id) => {
-          const source = read(id);
-          if (source) fingerprints.set(id, source.fingerprint);
+      : visibleCognitionEvidence(db, row, (id, revision) => {
+          const source = read(id, revision);
+          if (source)
+            fingerprints.set(
+              JSON.stringify([id, revision]),
+              source.fingerprint,
+            );
           return source;
         });
     if (!evidence) continue;
@@ -213,9 +217,11 @@ function cognitionOpening(runtime, ctx, { fresh, personIds = [] }) {
           if (!record) continue;
           const evidence = purged(record)
             ? []
-            : visibleCognitionEvidence(db, record, (id) => {
-                const source = currentSources.read(id);
-                return source && source.fingerprint === fingerprints.get(id)
+            : visibleCognitionEvidence(db, record, (id, revision) => {
+                const source = currentSources.read(id, revision);
+                return source &&
+                  source.fingerprint ===
+                    fingerprints.get(JSON.stringify([id, revision]))
                   ? source
                   : null;
               });

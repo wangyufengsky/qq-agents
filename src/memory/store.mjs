@@ -1,6 +1,7 @@
 import { initializeDreamPurge, reconcileDreamPurges } from "../dream/purge.mjs";
 import {
   DREAM_SCHEMA_VERSION,
+  upgradeDreamProvenance,
   exportDreamCheckpoint,
   initializeDreamTables,
 } from "../dream/schema.mjs";
@@ -221,6 +222,7 @@ export class MemoryStore {
       if (version < DREAM_SCHEMA_VERSION)
         this.transaction(() => {
           initializeDreamTables(this.db);
+          upgradeDreamProvenance(this.db);
           this.db.exec(`PRAGMA user_version=${DREAM_SCHEMA_VERSION}`);
         });
       migrateHomeSocial(this.db);
@@ -237,9 +239,11 @@ export class MemoryStore {
         initializeDreamPurge(this.db);
         if (!hadDreamPurge)
           for (const { agent_id } of this.db
-            .prepare("SELECT DISTINCT agent_id FROM cognition_evidence")
+            .prepare(
+              "SELECT agent_id FROM cognition_evidence UNION SELECT agent_id FROM memory_corrections",
+            )
             .all())
-            reconcileDreamPurges(this.db, agent_id);
+            reconcileDreamPurges(this.bind(agent_id));
         initializeGardenTables(this.db);
         initializeStoryTables(this.db);
       });
@@ -956,7 +960,9 @@ class AgentMemory {
           origin,
         );
       this.db
-        .prepare("INSERT INTO diary_revisions VALUES(?,?,?,?,?,?)")
+        .prepare(
+          "INSERT INTO diary_revisions(id,revision,title,body,metadata,written_at) VALUES(?,?,?,?,?,?)",
+        )
         .run(id, 1, title, body, json(metadata), time);
       return { id, revision: 1 };
     });
@@ -1153,7 +1159,9 @@ class AgentMemory {
         )
         .run(title, body, revision, time, json(metadata), id, this.agentId);
       this.db
-        .prepare("INSERT INTO diary_revisions VALUES(?,?,?,?,?,?)")
+        .prepare(
+          "INSERT INTO diary_revisions(id,revision,title,body,metadata,written_at) VALUES(?,?,?,?,?,?)",
+        )
         .run(id, revision, title, body, json(metadata), time);
       return { id, revision };
     });

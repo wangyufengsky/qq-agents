@@ -93,6 +93,11 @@ test("runtime launches a one-use session; discovers only scoped tools; accepts o
       const nonce = /context=(\S+)/.exec(p.prompt)[1];
       const ctx = f.runtime.capability(nonce);
       const { tools } = scopedCatalog(f.runtime, ctx, {});
+      for (const name of ["memory_read", "memory_search"])
+        assert.match(
+          tools.find((tool) => tool.name === name).description,
+          /revision/,
+        );
       assert.deepEqual(
         tools.map(({ name }) => name),
         [

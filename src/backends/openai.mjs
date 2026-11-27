@@ -394,6 +394,7 @@ export class OpenAIBackend {
   }
   /** @param {RunParams} params */
   async run({
+    dream = false,
     prompt,
     instructions,
     onUsage,
@@ -417,6 +418,7 @@ export class OpenAIBackend {
     await beforeSessionInput(session, async () => this.headers());
     /** @type {OpenAISession} */
     let state;
+    if (dream && (session || recovery)) throw Error("SESSION_REQUIRES_HANDOFF");
     if (session) {
       try {
         state = this.load(session.id);
@@ -441,8 +443,10 @@ export class OpenAIBackend {
           },
         ],
       };
-      this.store(state);
-      saveSession({ backend: "openai", id: state.id, signature });
+      if (!dream) {
+        this.store(state);
+        saveSession({ backend: "openai", id: state.id, signature });
+      }
     }
     const capacityTokens = await this.contextWindow(signal);
     const turnId = randomUUID();
@@ -468,7 +472,7 @@ export class OpenAIBackend {
         role: "user",
         content: prompt + (appendPrompt?.() || ""),
       });
-      this.store(state);
+      if (!dream) this.store(state);
       for (let round = 0; ; round++) {
         if (controller.signal.aborted) throw Error("ABORTED");
         if (round >= this.config.maxToolRounds)
@@ -586,7 +590,7 @@ export class OpenAIBackend {
         if (images.length) step.push({ role: "user", content: images });
         if (controller.signal.aborted) throw Error("ABORTED");
         state.messages.push(...step);
-        this.store(state);
+        if (!dream) this.store(state);
         if (!calls.length) return;
       }
     } catch (/** @type {any} */ e) {
@@ -598,7 +602,7 @@ export class OpenAIBackend {
           ["authentication", "quota", "rate-limit"].includes(e.category))
       )
         e.sessionReusable = true;
-      if (!e.sessionReusable || signal.aborted) saveSession(null);
+      if (!dream && (!e.sessionReusable || signal.aborted)) saveSession(null);
       throw e;
     } finally {
       signal.removeEventListener("abort", abort);
