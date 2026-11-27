@@ -274,7 +274,9 @@ test("management console opens the garden, edits its catalog and trades from the
   await page.getByRole("button", { name: "刷新花园" }).click();
   await secondPlot.getByText("雾紫绣球", { exact: true }).waitFor();
   await secondPlot.getByText("开花", { exact: true }).waitFor();
-  assert.equal(await secondPlot.locator(".garden-art-plant").count(), 0);
+  await secondPlot
+    .locator('img[src$="/plant-hydrangea-mature.webp"]')
+    .evaluate((image) => image.decode());
   await detail.getByRole("button", { name: "看这株 · 生长手帐" }).click();
   await journal.getByText(/雾紫绣球/).waitFor();
   await journal.getByRole("button", { name: "查看单株花卡" }).click();

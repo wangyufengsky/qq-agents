@@ -98,7 +98,7 @@ test("explorer plants show time-of-day flower cards, play rattles, pop seeds and
     page.getByRole("button", { name: "刷新花园", exact: true }).click();
   await tile(1).getByText("早安牵牛", { exact: true }).waitFor();
   await tile(1)
-    .locator(".garden-art-plant")
+    .locator('img[src$="/plant-morning-glory-mature.webp"]')
     .evaluate((img) => img.decode());
   await tile(1).getByText("花瓣舒展", { exact: true }).waitFor();
   const flowerCard = async (condition) => {
@@ -398,7 +398,7 @@ test("second edition plants show both faces and harvest stages at 375px", async 
 
   await tile(1).getByText("晚霞紫苏", { exact: true }).waitFor();
   await tile(1)
-    .locator('img[src$="/plant-seedling.webp"]')
+    .locator('img[src$="/plant-perilla-mature.webp"]')
     .evaluate((img) => img.decode());
   await detail.getByText(/叶面 .*脉/).waitFor();
   await detail.getByText(/叶背 .*色印/).waitFor();
@@ -764,7 +764,7 @@ test("third edition plants show real stages and remember the same opening neighb
   await tile(1).getByText("嫩葫芦", { exact: true }).waitFor();
   await tile(2).getByText("正开花", { exact: true }).waitFor();
   await tile(2)
-    .locator('img[src$="/plant-seedling.webp"]')
+    .locator('img[src$="/plant-paper-moon-mature.webp"]')
     .evaluate((image) => image.decode());
   await tile(4).click();
   const remembered = detail.locator(".garden-echo-neighbors");
