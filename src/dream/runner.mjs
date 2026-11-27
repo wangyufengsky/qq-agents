@@ -1,4 +1,5 @@
 // @ts-check
+import { commitStory } from "./story.mjs";
 import { dreamDaily, dreamPaused } from "./scheduler.mjs";
 import { setImmediate } from "node:timers/promises";
 import { randomBytes, randomUUID } from "node:crypto";
@@ -6,7 +7,12 @@ import { resolveFunctionalAgent } from "../core/functional-agents.mjs";
 import { resolveFunctionalContract } from "../core/functional-contracts.mjs";
 import { prepared } from "../core/recall-boundary.mjs";
 import { knownErrorCodes } from "../core/error-codes.mjs";
-import { DREAM_LIST, DREAM_SUBMIT } from "../tools/names.mjs";
+import {
+  DREAM_LIST,
+  DREAM_SUBMIT,
+  DREAM_STORY,
+  isDreamKind,
+} from "../tools/names.mjs";
 import {
   SOURCE_PARTITIONS,
   dreamSources,
@@ -22,16 +28,16 @@ import {
   visibleCognitionEvidence,
 } from "./store.mjs";
 
-/** @typedef {{signal?:AbortSignal,idempotencyKey?:string,mode?:"nap"|"deep",trigger?:"manual"|"idle"|"rhythm-sleep"|"rest",queuedId?:string}} RunOptions */
+/** @typedef {{signal?:AbortSignal,idempotencyKey?:string,mode?:"nap"|"deep"|"imaginative",trigger?:"manual"|"idle"|"rhythm-sleep"|"rest"|"threshold",queuedId?:string}} RunOptions */
 /** @typedef {import("./store.mjs").Snapshot} Snapshot */
 /** @typedef {import("./source-filter.mjs").DreamSource} Source */
 
 export class DreamRunner {
   /** @type {Map<string, object>} */
   #active = new Map();
-  /** @type {Map<string,{id:string,mode:"nap"|"deep"}>} */
+  /** @type {Map<string,{id:string,mode:"nap"|"deep"|"imaginative"}>} */
   #manual = new Map();
-  /** @type {WeakMap<object, {snapshot:Snapshot,patch?:unknown}>} */
+  /** @type {WeakMap<object, {snapshot:Snapshot,patch?:unknown, acknowledgeStory:()=>void}>} */
   #invocations = new WeakMap();
 
   /** @param {any} runtime */
@@ -50,7 +56,8 @@ export class DreamRunner {
       ...this.runtime.config.agents
         .filter(
           (/** @type {any} */ role) =>
-            role.dream.enabled && role.dream.cognitive.enabled,
+            role.dream.enabled &&
+            (role.dream.cognitive.enabled || role.dream.imaginative.enabled),
         )
         .map(
           (/** @type {any} */ role) => role.dream.budget.maxGlobalConcurrency,
@@ -58,14 +65,20 @@ export class DreamRunner {
     );
   }
 
-  /** @param {string} agentId @param {"nap"|"deep"} mode */
+  get backgroundSlot() {
+    return this.#active.size < this.concurrency && this.#manual.size === 0;
+  }
+
+  /** @param {string} agentId @param {"nap"|"deep"|"imaginative"} mode */
   trigger(agentId, mode) {
     const runtime = this.runtime,
       role = runtime.agent(agentId),
       db = runtime.memory.db;
     if (
       !role.dream.enabled ||
-      !role.dream.cognitive.enabled ||
+      !(mode === "imaginative"
+        ? role.dream.imaginative.enabled
+        : role.dream.cognitive.enabled) ||
       dreamPaused(runtime, role)
     )
       throw Error("DREAM_DISABLED");
@@ -74,7 +87,12 @@ export class DreamRunner {
     });
     if (blockers.length) throw Error(blockers[0]);
     if (this.busy(agentId)) throw Error("DREAM_ALREADY_RUNNING");
-    if (dreamDaily(runtime, role).used >= role.dream.budget.maxRunsPerDay)
+    const daily = dreamDaily(runtime, role);
+    if (
+      daily.used >= role.dream.budget.maxRunsPerDay ||
+      (mode === "imaginative" &&
+        daily.imaginativeUsed >= role.dream.imaginative.dailyMax)
+    )
       throw Error("DREAM_BUDGET_EXCEEDED");
     const id = randomUUID(),
       time = new Date(runtime.now()).toISOString();
@@ -108,7 +126,7 @@ export class DreamRunner {
       );
     }
     for (const ctx of runtime.capabilities.values())
-      if (ctx.runtimeKind === "dream-cognitive" && ctx.agentId === agentId)
+      if (isDreamKind(ctx.runtimeKind) && ctx.agentId === agentId)
         ctx.controller.abort(Error("DREAM_DISABLED"));
   }
 
@@ -155,13 +173,20 @@ export class DreamRunner {
   ) {
     const runtime = this.runtime;
     const role = runtime.agent(agentId);
+    const kind =
+      mode === "imaginative" ? "dream-imaginative" : "dream-cognitive";
     const profile = resolveFunctionalAgent(
       role,
       "@dream",
-      "dream-cognitive",
+      kind,
       runtime.config,
     );
-    if (profile?.kind !== "dream-cognitive") throw Error("DREAM_DISABLED");
+    if (
+      !profile ||
+      (profile.kind !== "dream-cognitive" &&
+        profile.kind !== "dream-imaginative")
+    )
+      throw Error("DREAM_DISABLED");
     const config = runtime.config;
     const { definition, backend } = profile;
     const controller = new AbortController();
@@ -175,7 +200,7 @@ export class DreamRunner {
       if (blockers.length) throw Error(blockers[0]);
     };
     const ctx = {
-      runtimeKind: "dream-cognitive",
+      runtimeKind: kind,
       agentId,
       conversation: "@dream",
       functionalAgent: profile,
@@ -193,7 +218,8 @@ export class DreamRunner {
     };
     signal?.throwIfAborted();
     current();
-    if (mode !== "nap" && mode !== "deep") throw Error("DREAM_MODE_MISMATCH");
+    if (mode !== "nap" && mode !== "deep" && mode !== "imaginative")
+      throw Error("DREAM_MODE_MISMATCH");
     if (this.busy(agentId)) throw Error("DREAM_ALREADY_RUNNING");
     if (idempotencyKey) {
       const previous = prepared(
@@ -202,10 +228,13 @@ export class DreamRunner {
       ).get(agentId, idempotencyKey);
       if (previous) return { status: previous.status, runId: previous.run_id };
     }
+    const daily = dreamDaily(runtime, role);
     if (
       this.#active.size >= this.concurrency ||
-      (!queuedId && this.#manual.size > 0) ||
-      dreamDaily(runtime, role).used >= role.dream.budget.maxRunsPerDay
+      (!queuedId && !this.backgroundSlot) ||
+      daily.used >= role.dream.budget.maxRunsPerDay ||
+      (mode === "imaginative" &&
+        daily.imaginativeUsed >= role.dream.imaginative.dailyMax)
     )
       throw Error("DREAM_BUDGET_EXCEEDED");
     const { previous, snapshot } = startDream(runtime, agentId, {
@@ -218,7 +247,18 @@ export class DreamRunner {
       queuedId,
     });
     if (previous) return { status: previous.status, runId: previous.run_id };
-    const invocation = { snapshot, patch: /** @type {unknown} */ (undefined) };
+    let acknowledgeStory = () => {};
+    const storyReceipt =
+      mode === "imaginative"
+        ? new Promise((resolve) => {
+            acknowledgeStory = () => resolve(undefined);
+          })
+        : null;
+    const invocation = {
+      snapshot,
+      patch: /** @type {unknown} */ (undefined),
+      acknowledgeStory,
+    };
     this.#active.set(agentId, invocation);
     this.#invocations.set(ctx, invocation);
     runtime.capabilities.set(ctx.token, ctx);
@@ -279,6 +319,10 @@ export class DreamRunner {
           signal: controller.signal,
           ...(lease && { modelSelection: lease.modelSelection }),
         });
+        // The MCP relay can acknowledge its final stdout frame just after
+        // the model reports completion. Keep the capability until both settle.
+        if (storyReceipt && invocation.patch)
+          await Promise.race([storyReceipt, stopped]);
       } finally {
         if (lease) await lease.release();
         else await adapter.close?.();
@@ -292,7 +336,13 @@ export class DreamRunner {
       await Promise.race([native, stopped]);
       current();
       if (!invocation.patch) throw Error("DREAM_INVALID_PATCH");
-      return commitDream(runtime, snapshot, invocation.patch, ctx);
+      return mode === "imaginative"
+        ? commitStory(
+            runtime,
+            snapshot,
+            /** @type {import("./story.mjs").StoryPatch} */ (invocation.patch),
+          )
+        : commitDream(runtime, snapshot, invocation.patch, ctx);
     } catch (error) {
       const code =
         error instanceof Error && knownErrorCodes.has(error.message)
@@ -320,6 +370,21 @@ export class DreamRunner {
     if (ctx.backendInputEpoch !== ctx.inputEpoch)
       throw Error("BACKEND_INPUT_NOT_SUBMITTED");
     const { snapshot } = invocation;
+    if (ctx.runtimeKind === "dream-imaginative") {
+      if (name !== DREAM_STORY) throw Error("TOOL_DISABLED");
+      if (invocation.patch)
+        throw Error("FUNCTIONAL_AGENT_RESULT_ALREADY_SUBMITTED");
+      invocation.patch = args;
+      const accepted = { status: "accepted" };
+      runtime.stageToolOutput(ctx, accepted, [
+        {
+          value: accepted,
+          expected: accepted,
+          commit: invocation.acknowledgeStory,
+        },
+      ]);
+      return accepted;
+    }
     const sources = dreamSources(runtime, ctx, snapshot.cursorEnd);
     if (name === DREAM_SUBMIT) {
       if (invocation.patch)

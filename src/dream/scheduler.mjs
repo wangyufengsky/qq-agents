@@ -27,22 +27,32 @@ export function dreamDaily(runtime, role) {
   const now = runtime.now(),
     today = day.format(now);
   const runs =
-    /** @type {{mode:string,status:string,started_at:string,finished_at:string|null}[]} */ (
+    /** @type {{mode:string,run_id:string,trigger:string,status:string,started_at:string,finished_at:string|null}[]} */ (
       prepared(
         runtime.memory.db,
-        "SELECT mode,status,started_at,finished_at FROM dream_runs WHERE agent_id=? AND started_at>=?",
+        "SELECT mode,run_id,trigger,status,started_at,finished_at FROM dream_runs WHERE agent_id=? AND started_at>=? ORDER BY finished_at DESC,run_id",
       ).all(role.id, new Date(now - 48 * 60 * minute).toISOString())
     );
+  const startedToday = runs.filter(
+    (row) => day.format(new Date(row.started_at)) === today,
+  );
+  const stories = startedToday.filter((row) => row.mode === "imaginative");
+  const lastDeep = runs.find(
+    (row) =>
+      row.mode === "deep" &&
+      row.status === "COMMITTED" &&
+      row.finished_at &&
+      day.format(new Date(row.finished_at)) === today,
+  );
   return {
-    used: runs.filter((row) => day.format(new Date(row.started_at)) === today)
-      .length,
-    deepCommitted: runs.some(
-      (row) =>
-        row.mode === "deep" &&
-        row.status === "COMMITTED" &&
-        row.finished_at &&
-        day.format(new Date(row.finished_at)) === today,
-    ),
+    used: startedToday.length,
+    deepCommitted: Boolean(lastDeep),
+    lastDeepId: lastDeep?.run_id,
+    lastDeepFinishedAt: lastDeep?.finished_at
+      ? Date.parse(lastDeep.finished_at)
+      : null,
+    imaginativeUsed: stories.length,
+    imaginativeIdle: stories.some((row) => row.trigger === "idle"),
   };
 }
 
@@ -164,7 +174,7 @@ export class DreamScheduler {
     const runtime = this.runtime;
     return (
       role.dream.enabled &&
-      role.dream.cognitive.enabled &&
+      (role.dream.cognitive.enabled || role.dream.imaginative.enabled) &&
       !role.paused &&
       !dreamPaused(runtime, role) &&
       !roleTurnBusy(runtime, role.id) &&
@@ -179,6 +189,7 @@ export class DreamScheduler {
   /** @param {number} now */
   async scan(now) {
     const runtime = this.runtime;
+    const opportunities = [];
     for (const role of runtime.config.agents) {
       if (!this.available(role)) continue;
       const daily = dreamDaily(runtime, role);
@@ -189,19 +200,25 @@ export class DreamScheduler {
         rhythm = rhythmStatus(runtime, role);
       const sleeping =
         rhythm.state === "sleeping" && now - Number(rhythm.start) >= tenMinutes;
+      const cognitive = role.dream.cognitive.enabled;
       const deep =
+        cognitive &&
         role.dream.cognitive.deepDaily &&
         !daily.deepCommitted &&
         (sleeping ||
           (rhythm.state === "disabled" &&
             now - lastActivity >=
               Math.max(tenMinutes, role.dream.cognitive.napIdleMs)));
-      if (!idle && !deep) continue;
-      const lag = await dreamLag(
-        runtime,
-        role.id,
-        role.dream.cognitive.napMinEvents,
-      );
+      if (
+        !idle &&
+        !deep &&
+        !(role.dream.imaginative.enabled && daily.lastDeepId)
+      )
+        continue;
+      const lag =
+        cognitive && (idle || deep)
+          ? await dreamLag(runtime, role.id, role.dream.cognitive.napMinEvents)
+          : null;
       if (
         runtime.closed ||
         runtime.agent(role.id) !== role ||
@@ -215,6 +232,7 @@ export class DreamScheduler {
       if (
         deep &&
         (!sleeping || stillSleeping) &&
+        lag &&
         (lag.events || lag.diaries || lag.corrections)
       ) {
         void runtime.dreams
@@ -225,12 +243,63 @@ export class DreamScheduler {
           .catch((/** @type {unknown} */ error) => this.report(error, role.id));
       } else if (
         idle &&
+        lag &&
         (lag.events >= role.dream.cognitive.napMinEvents || lag.corrections)
       ) {
         void runtime.dreams
           .run(role.id, { mode: "nap", trigger: "idle" })
           .catch((/** @type {unknown} */ error) => this.report(error, role.id));
+      } else if (role.dream.imaginative.enabled) {
+        opportunities.push({ role, idle, lastActivity });
       }
+    }
+
+    // Reserve cognitive work first across roles, regardless of configuration order.
+    for (const { role, idle, lastActivity } of opportunities) {
+      if (
+        !runtime.dreams.backgroundSlot ||
+        runtime.closed ||
+        runtime.maintenance.active ||
+        runtime.config.globalPaused ||
+        runtime.config.mode !== "live" ||
+        runtime.config.agents.find(
+          (/** @type {{id:string}} */ agent) => agent.id === role.id,
+        ) !== role ||
+        !this.available(role) ||
+        (this.lastActivity.get(role.id) ?? this.started) !== lastActivity
+      )
+        continue;
+      const daily = dreamDaily(runtime, role);
+      if (
+        daily.used >= role.dream.budget.maxRunsPerDay ||
+        daily.imaginativeUsed >= role.dream.imaginative.dailyMax
+      )
+        continue;
+      const memory = runtime.memory.bind(role.id),
+        state = memory.state("@dream");
+      let trigger = /** @type {"threshold"|"idle"} */ ("idle");
+      if (daily.lastDeepId && state.storyDeepRunId !== daily.lastDeepId) {
+        memory.setState("@dream", {
+          ...state,
+          storyDeepRunId: daily.lastDeepId,
+        });
+        if (runtime.random() >= role.dream.imaginative.probability) continue;
+        trigger = "threshold";
+      } else {
+        const rhythm = rhythmStatus(runtime, role);
+        if (
+          !idle ||
+          daily.imaginativeIdle ||
+          rhythm.state === "sleeping" ||
+          rhythm.state === "rest-pending" ||
+          (daily.lastDeepFinishedAt !== null &&
+            lastActivity <= daily.lastDeepFinishedAt)
+        )
+          continue;
+      }
+      void runtime.dreams
+        .run(role.id, { mode: "imaginative", trigger })
+        .catch((/** @type {unknown} */ error) => this.report(error, role.id));
     }
   }
 }

@@ -1,5 +1,5 @@
 import { dreamReadDefinitions, dreamTool } from "./dream.mjs";
-import { DREAM_SUBMIT } from "./names.mjs";
+import { DREAM_SUBMIT, DREAM_STORY } from "./names.mjs";
 import { mediaLease } from "./media-lease.mjs";
 import { registry } from "./registry.mjs";
 export { TOOL_NAMES, toolSpecs } from "./specs.mjs";
@@ -13,7 +13,7 @@ export async function dispatchTool(runtime, ctx, name, input, beforeHandle) {
   const parsed = (dreamRead ? dreamRead[1] : definition.schema).safeParse(
     input,
   );
-  if (!parsed.success && name === DREAM_SUBMIT)
+  if (!parsed.success && (name === DREAM_SUBMIT || name === DREAM_STORY))
     throw Error("DREAM_INVALID_PATCH");
   if (!parsed.success) throw parsed.error;
   const args = parsed.data;

@@ -21,6 +21,20 @@ const dreamStatusLabels = {
   SKIPPED: "跳过",
   RETRY_WAIT: "待重试",
 };
+const dreamInspirationLabels = {
+  home_decor: "纸页小窝布置",
+  garden: "花园",
+  diary: "日记",
+  project: "项目",
+  chat_topic: "聊天话题",
+  other: "其他",
+};
+const dreamPendingStatuses = new Set([
+  "QUEUED",
+  "RUNNING",
+  "VALIDATING",
+  "RETRY_WAIT",
+]);
 const dreamCategoryLabels = {
   fact: "事实归纳",
   preference: "稳定偏好",
@@ -36,7 +50,7 @@ async function renderDreams() {
     content.textContent = "请先添加角色。";
     return;
   }
-  content.innerHTML = `<section class="card"><h2>梦境概览</h2><div id="dream-overview">正在读取…</div></section>
+  content.innerHTML = `<section class="card"><h2>梦境概览</h2><div id="dream-overview">正在读取…</div><p id="dream-trigger-status" class="hint" role="status"></p></section>
     <section class="card"><h2>长期认知</h2>
     <form id="dream-filters" class="toolbar">
       <label>类别<select name="category"><option value="">全部类别</option>${Object.entries(
@@ -52,18 +66,19 @@ async function renderDreams() {
       <label>关键词<input name="query" type="search"></label>
       <button type="submit">筛选</button>
     </form><div id="dream-list">正在读取…</div><div id="dream-detail"></div></section>
+    <section class="card"><h2>幻想梦境</h2><div id="dream-stories">正在读取…</div></section>
     <details class="card"><summary>最近运行</summary><div id="dream-runs">正在读取…</div></details>`;
   const active = () =>
     tab === "dreams" && roleId === agentId && content.contains(form);
   const form = $("#dream-filters");
   const roleQuery = new URLSearchParams({ agentId });
   let currentOffset = 0;
+  let currentRunId;
   async function overview() {
     const data = await api("/api/dreams/overview?" + roleQuery);
     if (!active()) return;
-    const blocker = !data.enabled
-      ? "认知梦未开启"
-      : data.mode === "isolated"
+    const blocker =
+      data.mode === "isolated"
         ? "隔离模式"
         : data.globalPaused
           ? "全局暂停"
@@ -72,19 +87,34 @@ async function renderDreams() {
             : data.paused
               ? "梦境暂停"
               : data.busy
-                ? "运行中"
+                ? "已有梦境待运行或正在运行"
                 : data.used >= data.limit
-                  ? "今日预算已用完"
+                  ? "今日总预算已用完"
                   : "";
+    const imaginativeBlocker =
+      blocker ||
+      (data.imaginative.used >= data.imaginative.limit
+        ? "今日幻想梦配额已用完"
+        : "");
+    const trackStatus = (profile, reason) =>
+      profile.enabled ? reason || "可以运行" : "未开启";
+    const backend = (profile) =>
+      profile.enabled
+        ? ` · 后端 ${esc(profile.backendId || "—")}${profile.dedicated ? "（专用）" : ""}${profile.model ? ` · 模型 ${esc(profile.model)}` : ""}`
+        : "";
     $("#dream-overview").innerHTML =
-      `<p>${esc(blocker || "可以运行")} · 今日运行 ${data.used} / ${data.limit}</p>
-      <p>后端 ${esc(data.backendId || "—")} ${data.dedicated ? "（专用）" : ""} ${esc(data.model || "")}</p>
-      <p>待整理：事件 ${data.lag.events} · 日记 ${data.lag.diaries} · 更正 ${data.lag.corrections}</p>
+      `<p>今日运行 ${data.used} / ${data.limit}</p>
+      <p>认知梦：${esc(trackStatus(data.cognitive, blocker))}${backend(data.cognitive)}</p>
+      <p>幻想梦：${esc(trackStatus(data.imaginative, imaginativeBlocker))}${backend(data.imaginative)} · 今日 ${data.imaginative.used} / ${data.imaginative.limit}</p>
+      ${data.cognitive.enabled ? `<p>待整理：事件 ${data.lag.events} · 日记 ${data.lag.diaries} · 更正 ${data.lag.corrections}</p>` : ""}
       <div class="card-actions"><button type="button" id="dream-refresh">刷新</button><button type="button" id="dream-pause">${data.paused ? "恢复梦境" : "暂停梦境"}</button>
-      <button type="button" data-dream-run="nap" ${blocker ? "disabled" : ""}>立即小憩</button>
-      <button type="button" data-dream-run="deep" ${blocker ? "disabled" : ""}>立即深度睡眠</button></div>`;
+      <button type="button" data-dream-run="nap" ${!data.cognitive.enabled || blocker ? "disabled" : ""}>立即小憩</button>
+      <button type="button" data-dream-run="deep" ${!data.cognitive.enabled || blocker ? "disabled" : ""}>立即深度睡眠</button>
+      <button type="button" data-dream-run="imaginative" ${!data.imaginative.enabled || imaginativeBlocker ? "disabled" : ""}>立即做幻想梦</button></div>`;
     $("#dream-refresh").onclick = () =>
-      action(() => Promise.all([overview(), list(currentOffset), runs()]));
+      action(() =>
+        Promise.all([overview(), list(currentOffset), stories(), runs()]),
+      );
     $("#dream-pause").onclick = () =>
       action(async () => {
         await api("/api/dreams/pause", { agentId, paused: !data.paused });
@@ -93,11 +123,12 @@ async function renderDreams() {
     content.querySelectorAll("[data-dream-run]").forEach((button) => {
       button.onclick = () =>
         action(async () => {
-          await api("/api/dreams/trigger", {
-            agentId,
-            mode: button.dataset.dreamRun,
-          });
-          await Promise.all([overview(), runs()]);
+          const mode = button.dataset.dreamRun;
+          const receipt = await api("/api/dreams/trigger", { agentId, mode });
+          if (!active()) return;
+          currentRunId = receipt.runId;
+          showTriggerStatus(mode, receipt.status);
+          await refreshRun(receipt.runId);
         });
     });
   }
@@ -192,6 +223,45 @@ async function renderDreams() {
         await list(currentOffset);
       });
   }
+  async function stories() {
+    const data = await api("/api/dreams/stories?" + roleQuery);
+    if (!active()) return;
+    $("#dream-stories").innerHTML =
+      data.items
+        .map((story) => {
+          const themes = JSON.parse(story.themes_json);
+          const inspirations = JSON.parse(story.inspirations_json);
+          const published = story.published_room_slot
+            ? `<p class="hint">纸页小窝槽位 ${esc(story.published_room_slot)}${story.published_at ? ` · ${esc(story.published_at)}` : ""}</p>`
+            : "";
+          return `<details class="record"><summary><span class="pill accent">虚构梦境 · 非现实事件</span> <strong title="${esc(story.title)}">${esc(story.title)}</strong></summary>
+          <p class="hint">${esc(story.created_at)}</p>
+          <h4>故事</h4><p>${esc(story.narrative)}</p>
+          <h4>感想</h4><p>${esc(story.reflection)}</p>
+          ${themes.length ? `<p><strong>主题</strong> · ${esc(themes.join("、"))}</p>` : ""}
+          ${inspirations.length ? `<h4>梦里的灵感</h4><ul>${inspirations.map(({ kind, content }) => `<li><strong>${esc(dreamInspirationLabels[kind] || kind)}</strong> · ${esc(content)}</li>`).join("")}</ul>` : ""}
+          ${published}</details>`;
+        })
+        .join("") || '<p class="empty">暂无幻想梦境。</p>';
+  }
+  function showTriggerStatus(mode, status, errorCode) {
+    const label = dreamStatusLabels[status] || status || "已提交";
+    $("#dream-trigger-status").textContent =
+      `${dreamModeLabels[mode] || mode} · ${label}${errorCode ? ` · ${errorCode}` : ""}`;
+  }
+  async function refreshRun(runId) {
+    if (!active() || runId !== currentRunId) return;
+    const [items] = await Promise.all([runs(), overview()]);
+    if (!active() || runId !== currentRunId) return;
+    const run = items.find((item) => item.run_id === runId);
+    if (!run) return;
+    showTriggerStatus(run.mode, run.status, run.error_code);
+    if (dreamPendingStatuses.has(run.status)) {
+      setTimeout(() => action(() => refreshRun(runId)), 2000);
+    } else if (run.mode === "imaginative" && run.status === "COMMITTED") {
+      await stories();
+    }
+  }
   async function runs() {
     const data = await api("/api/dreams/runs?" + roleQuery);
     if (!active()) return;
@@ -210,10 +280,11 @@ async function renderDreams() {
           return `<div class="record"><strong>${esc(dreamModeLabels[run.mode] || run.mode)} · ${esc(dreamStatusLabels[run.status] || run.status)}</strong><p>${esc(dreamTriggerLabels[run.trigger] || run.trigger)} · ${esc(run.created_at)} · ${run.changes_count} 项变更${elapsed === null ? "" : ` · ${elapsed}s`}</p><p class="hint">${esc(usageLabel)}${run.error_code ? " · " + esc(run.error_code) : ""}</p></div>`;
         })
         .join("") || '<p class="empty">暂无运行记录。</p>';
+    return data.items;
   }
   form.onsubmit = (event) => {
     event.preventDefault();
     action(() => list());
   };
-  await Promise.all([overview(), list(), runs()]);
+  await Promise.all([overview(), list(), stories(), runs()]);
 }

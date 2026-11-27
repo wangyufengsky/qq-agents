@@ -1,5 +1,5 @@
 // @ts-check
-import { DREAM_TOOLS } from "../tools/names.mjs";
+import { DREAM_STORY, DREAM_TOOLS } from "../tools/names.mjs";
 import { allowed, allowedGroups } from "./policy.mjs";
 import { isDesktopConversation } from "../home/desktop-decision.mjs";
 
@@ -45,13 +45,13 @@ const desktopDefinition = Object.freeze({ kind: "desktop-dialogue" });
  * Resolve a functional identity while leaving the caller's data scope intact.
  * @param {Role} role
  * @param {string} conversation
- * @param {"subject" | "qq" | "memory" | "desktop" | "dream-cognitive"} [key]
+ * @param {"subject" | "qq" | "memory" | "desktop" | "dream-cognitive" | "dream-imaginative"} [key]
  * @param {Configuration} [config]
  */
 export function resolveFunctionalAgent(role, conversation, key, config) {
-  if (key === "dream-cognitive") {
+  if (key === "dream-cognitive" || key === "dream-imaginative") {
     if (conversation !== "@dream" || !config) return undefined;
-    return dreamAgentProfile(role, config);
+    return dreamAgentProfile(role, config, key);
   }
   if (isDesktopConversation(conversation)) {
     if (key && key !== "desktop") return undefined;
@@ -207,10 +207,12 @@ export function memoryRecallPolicy(role, conversation, config) {
   };
 }
 
-/** @param {Role} role @param {Configuration} config */
-export function dreamAgentProfile(role, config) {
+/** @param {Role} role @param {Configuration} config @param {"dream-cognitive"|"dream-imaginative"} [kind] */
+export function dreamAgentProfile(role, config, kind = "dream-cognitive") {
   const { dream } = role;
-  if (!dream?.enabled || !dream.cognitive.enabled) return undefined;
+  const mode =
+    kind === "dream-imaginative" ? dream?.imaginative : dream?.cognitive;
+  if (!dream?.enabled || !mode?.enabled) return undefined;
   const dedicated = config.backends.filter(
     (backend) => backend.functionalAgentOnly,
   );
@@ -223,17 +225,17 @@ export function dreamAgentProfile(role, config) {
   );
   if (!backend) return undefined;
   return {
-    key: /** @type {const} */ ("dream-cognitive"),
-    kind: /** @type {const} */ ("dream-cognitive"),
-    instanceKey: `${role.id}/dream-cognitive/@dream`,
+    key: kind,
+    kind,
+    instanceKey: `${role.id}/${kind}/@dream`,
     definition: {
-      kind: /** @type {const} */ ("dream-cognitive"),
-      tools: DREAM_TOOLS,
+      kind,
+      tools: kind === "dream-imaginative" ? [DREAM_STORY] : DREAM_TOOLS,
       backendId: backend.id,
-      model: dream.cognitive.model || dream.model || backend.model,
-      effort: dream.cognitive.effort || dream.effort || backend.effort,
+      model: mode.model || dream.model || backend.model,
+      effort: mode.effort || dream.effort || backend.effort,
       provider: backend.provider,
-      timeoutMs: dream.cognitive.timeoutMs,
+      timeoutMs: mode.timeoutMs,
     },
     backend,
   };

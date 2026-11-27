@@ -5,6 +5,7 @@ import {
   DESKTOP_ACTIVITY_DECISION,
   DESKTOP_DECISION,
   FUNCTIONAL_AGENT_RESULT,
+  DREAM_STORY,
   DREAM_LIST,
   DREAM_SUBMIT,
 } from "../src/tools/names.mjs";
@@ -18,6 +19,7 @@ test("every advertised tool has exactly one schema and handler, and unknown/prot
       (name) =>
         ![
           FUNCTIONAL_AGENT_RESULT,
+          DREAM_STORY,
           DREAM_LIST,
           DREAM_SUBMIT,
           DESKTOP_ACTIVITY_DECISION,

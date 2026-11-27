@@ -2,9 +2,10 @@
 import { prepared } from "../core/recall-boundary.mjs";
 import { visibleCognitionEvidence } from "./store.mjs";
 import { dreamSources, sourceScope } from "./source-filter.mjs";
+import { storyOpening } from "./consumption.mjs";
 
 /** @typedef {import("./store.mjs").Cognition} Cognition */
-/** @typedef {{shown:Record<string,number>,line:string,evidenceIds:string[]}} Opening */
+/** @typedef {{shown?:Record<string,number>,line:string,evidenceIds:string[],commitDream?:()=>void}} Opening */
 /** @typedef {{line:string,refresh:() => Opening}} PreparedOpening */
 const watermarks = {
   events: Number.MAX_SAFE_INTEGER,
@@ -45,7 +46,7 @@ function cognitionLine(items, caches, budget) {
     : "";
 }
 /** @param {any} runtime @param {{agentId:string,conversation:string}} ctx @param {{fresh:boolean,personIds?:string[]}} options @returns {PreparedOpening|null} */
-export function cognitionContext(runtime, ctx, { fresh, personIds = [] }) {
+function cognitionOpening(runtime, ctx, { fresh, personIds = [] }) {
   const { agentId, conversation } = ctx;
   const scope = sourceScope(conversation);
   const role = runtime.agent(agentId);
@@ -195,15 +196,51 @@ export function cognitionContext(runtime, ctx, { fresh, personIds = [] }) {
   };
 }
 
+/** @param {any} runtime @param {{agentId:string,conversation:string}} ctx @param {{fresh:boolean,personIds?:string[]}} options @returns {PreparedOpening|null} */
+export function cognitionContext(runtime, ctx, options) {
+  const cognition = cognitionOpening(runtime, ctx, options);
+  const story =
+    sourceScope(ctx.conversation) === "global"
+      ? null
+      : storyOpening(runtime, ctx, options.fresh);
+  if (!story) return cognition;
+  const line = (
+    /** @type {string|undefined} */ cognitive,
+    /** @type {typeof story.projection} */ fictional,
+  ) =>
+    [
+      cognitive,
+      fictional &&
+        `${fictional.label} ${JSON.stringify({ title: fictional.title, summary: fictional.summary })}`,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+  return {
+    line: line(cognition?.line, story.projection),
+    refresh() {
+      const refreshed = cognition?.refresh();
+      const fictional = story.refresh();
+      return {
+        ...refreshed,
+        line: line(refreshed?.line, fictional),
+        evidenceIds: refreshed?.evidenceIds ?? [],
+        commitDream: () => story.commit(!!fictional),
+      };
+    },
+  };
+}
+
 /** @param {any} memory @param {{conversation:string,turnId:string,privateRead:Set<string>,persistTaint?:()=>void}} ctx @param {Opening|null} opening */
 export function commitCognitionContext(memory, ctx, opening) {
   if (!opening) return;
   const state = memory.state(ctx.conversation);
   if (state.lastTurnId !== ctx.turnId) return;
-  memory.setState(ctx.conversation, {
-    ...state,
-    cognitionsShown: opening.shown,
-  });
+  if (opening.shown)
+    memory.setState(ctx.conversation, {
+      ...state,
+      cognitionsShown: opening.shown,
+    });
+  opening.commitDream?.();
   for (const id of opening.evidenceIds) ctx.privateRead.add(id);
   if (opening.evidenceIds.length) ctx.persistTaint?.();
 }

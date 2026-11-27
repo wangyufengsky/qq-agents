@@ -18,6 +18,7 @@ import {
   DESKTOP_BODY_CONTROL,
   FUNCTIONAL_AGENT_RESULT,
   TOOL_NAMES,
+  DREAM_STORY,
   DREAM_LIST,
   DREAM_SUBMIT,
 } from "./names.mjs";
@@ -105,6 +106,7 @@ for (const [group, dispatch] of [
     handlers[name] = (runtime, ctx, args) => dispatch(runtime, ctx, name, args);
   }
 const registeredNames = [
+  DREAM_STORY,
   DREAM_LIST,
   DREAM_SUBMIT,
   ...TOOL_NAMES,

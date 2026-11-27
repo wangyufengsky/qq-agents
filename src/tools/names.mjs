@@ -13,6 +13,7 @@ export const DESKTOP_MEMORY_TOOLS = Object.freeze([
   "memory_search",
   "memory_read",
 ]);
+export const DREAM_STORY = "dream_story_submit";
 export const DREAM_SUBMIT = "dream_cognition_submit";
 export const DREAM_LIST = "dream_cognition_list";
 export const DREAM_TOOLS = Object.freeze([
@@ -22,6 +23,9 @@ export const DREAM_TOOLS = Object.freeze([
   DREAM_LIST,
   DREAM_SUBMIT,
 ]);
+/** @param {unknown} kind */
+export const isDreamKind = (kind) =>
+  kind === "dream-cognitive" || kind === "dream-imaginative";
 export const TOOL_NAMES = Object.freeze([
   DESKTOP_HISTORY,
   DESKTOP_ROLE_MAIL,
