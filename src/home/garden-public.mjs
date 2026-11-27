@@ -13,7 +13,12 @@ import {
   gardenStageLabel,
 } from "../../public/garden-art/stages.js";
 import { floodRisk, gardenHours } from "./garden-risks.mjs";
-import { DAY, HOUR, gardenVariantDetail } from "./garden-rules.mjs";
+import {
+  DAY,
+  HOUR,
+  explorerPlantView,
+  gardenVariantDetail,
+} from "./garden-rules.mjs";
 import { renderOwnedHomeImage } from "./scene-view.mjs";
 
 const artwork = Symbol("gardenSnapshotArtwork");
@@ -319,8 +324,18 @@ export function gardenPlantSnapshot(state, detail, { running, now, plot }) {
       : null;
   const qualityNames = { ordinary: "普通", fine: "优良", perfect: "完美" };
   const variant = plant ? gardenVariantDetail(plant) : {};
+  const explorer =
+    current?.plant && !archived
+      ? explorerPlantView(
+          current.plant,
+          state.clock,
+          state.weather.kind,
+          current.sheltered,
+        )
+      : undefined;
   const conditions = [
     label,
+    ...(explorer ? [explorer.text] : []),
     ...(variant.variantName ? [variant.variantName] : []),
     ...(growing && plant
       ? [
@@ -374,6 +389,7 @@ export function gardenPlantSnapshot(state, detail, { running, now, plot }) {
     .filter(Boolean)
     .join(" · ");
   const cardDetails = [
+    ...(explorer ? [["现场", explorer.text]] : []),
     ...(variant.variantName ? [["花色", variant.variantName]] : []),
     ...(plant?.quality ? [["成熟品质", qualityNames[plant.quality]]] : []),
     ...(environment ? [["种植环境", environment]] : []),
@@ -407,6 +423,7 @@ export function gardenPlantSnapshot(state, detail, { running, now, plot }) {
     ...common,
     name: record.name,
     ...variant,
+    ...(explorer && { explorer }),
     plantId: record.plantId,
     snapshotId,
     planted:

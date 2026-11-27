@@ -117,9 +117,61 @@ export const MISTBELL = "mistbell";
 export const SUNBERRY = "sunberry";
 export const FOUR_LEAF_CLOVER = "four_leaf_clover";
 export const CHAMOMILE = "chamomile";
+export const MORNING_GLORY = "morning-glory";
+export const RATTLE_PEA = "rattle-pea";
+export const BALSAM = "balsam";
+export const LAMBS_EAR = "lambs-ear";
 const hydrangea = "hydrangea";
 
 const expandedCrops = /** @type {const} */ ([
+  [
+    MORNING_GLORY,
+    "早安牵牛",
+    "清晨舒展花瓣，过了正午便把花瓣卷起。",
+    true,
+    45,
+    30,
+    20,
+    "sun",
+    1,
+    105,
+  ],
+  [
+    RATTLE_PEA,
+    "响铃豌豆",
+    "熟荚轻晃有响声，每一下嗒声都对应荚里的一粒豆子。",
+    true,
+    55,
+    42,
+    25,
+    "neutral",
+    1,
+    55,
+  ],
+  [
+    BALSAM,
+    "跳跳凤仙",
+    "采花可直接收获。也可以先轻碰熟荚，为公共仓库留下一袋种子。",
+    true,
+    65,
+    44,
+    25,
+    "neutral",
+    1,
+    145,
+  ],
+  [
+    LAMBS_EAR,
+    "绒耳草",
+    "露天的细雨会挂成一排银珠，完整的绒叶适合压制书签。",
+    true,
+    50,
+    48,
+    18,
+    "shade",
+    1,
+    120,
+  ],
   [
     hydrangea,
     "蓝雨绣球",
@@ -194,6 +246,55 @@ const expandedCrops = /** @type {const} */ ([
   ],
 ]);
 
+/**
+ * @param {Pick<Plant,"id">} plant
+ * @returns {number} One stable pod count shared by care views, guesses and harvest.
+ */
+export function rattlePeaCount(plant) {
+  return (
+    2 +
+    (createHash("sha256").update(`pea:${plant.id}`).digest().readUInt32BE() % 4)
+  );
+}
+
+/** @param {Pick<Plant,"id">} plant */
+export function lambsEarLeafShape(plant) {
+  const shapes = ["圆尖绒叶", "狭长绒叶", "宽圆绒叶"];
+  return shapes[
+    createHash("sha256").update(`leaf:${plant.id}`).digest().readUInt32BE() %
+      shapes.length
+  ];
+}
+
+/** @param {Pick<Plant,"id"|"cropId"|"status"|"podPopped">} plant @param {number} clock
+ * @param {import("./garden-weather.mjs").Weather["kind"]} weather @param {boolean} sheltered */
+export function explorerPlantView(plant, clock, weather, sheltered) {
+  if (plant.status === "withered") return undefined;
+  if (plant.cropId === MORNING_GLORY && plant.status === "mature") {
+    const hour = (clock % DAY) / HOUR;
+    const bloom = hour >= 6 && hour < 12 ? "open" : "rolled";
+    return { bloom, text: bloom === "open" ? "清晨花瓣舒展" : "花瓣轻轻卷起" };
+  }
+  if (plant.cropId === RATTLE_PEA && plant.status === "mature") {
+    const rattles = Array.from({ length: rattlePeaCount(plant) }, () => "嗒");
+    return { rattles, text: `轻晃豆荚，${rattles.join("、")}。` };
+  }
+  if (plant.cropId === BALSAM && plant.status === "mature")
+    return plant.podPopped
+      ? { canPop: false, text: "果荚已弹过籽" }
+      : { canPop: true, text: "成熟果荚碰碰就会弹籽" };
+  if (plant.cropId === LAMBS_EAR) {
+    const leafShape = lambsEarLeafShape(plant);
+    const silverBeads = !sheltered && weather === "drizzle";
+    return {
+      leafShape,
+      silverBeads,
+      text: silverBeads ? "绒叶挂着细雨银珠" : leafShape,
+    };
+  }
+  return undefined;
+}
+
 /** @param {string} id @param {Crop} crop */
 export function gardenCropTraits(id, crop) {
   return [
@@ -203,6 +304,10 @@ export function gardenCropTraits(id, crop) {
     ...(id === hydrangea ? ["雨晴变色", "细雨滋养"] : []),
     ...(id === CHAMOMILE ? ["邻株护卫"] : []),
     ...(id === "succulent" ? ["耐旱"] : []),
+    ...(id === MORNING_GLORY ? ["清晨开花"] : []),
+    ...(id === RATTLE_PEA ? ["熟荚有响声"] : []),
+    ...(id === BALSAM ? ["果荚弹籽"] : []),
+    ...(id === LAMBS_EAR ? ["雨珠绒叶"] : []),
   ];
 }
 
@@ -404,7 +509,7 @@ export function gardenPlantRules(settings) {
 /** @typedef {"ordinary" | "fine" | "perfect"} Quality */
 /**
  * @typedef {{id: string, cropId: string, actorId: string, plantedAt: number, sownClock?: number,
- * settledAt: number, maturedAt?: number, harvestCount?: number, blessed?: boolean, fullMoonDay?: number,
+ * settledAt: number, maturedAt?: number, harvestCount?: number, blessed?: boolean, podPopped?: boolean, fullMoonDay?: number,
  * variant?: keyof typeof gardenVariants, variantName?: string, rainHours?: number, sunHours?: number, weatherHours?: number,
  * drizzleBonusDay?: number, water: number, growth: number, dry: number, low: number,
  * floodDays?: number, floodLoss?: number, qualityAdjustment?: number, earthwormDay?: number, witheredReason?: "drought" | "flood", fertilizer: number, status: "growing" | "mature" | "withered", quality: Quality | null,

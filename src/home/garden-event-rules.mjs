@@ -3,7 +3,12 @@ import {
   gardenGiftId,
   gardenGiftOffers,
 } from "./garden-items.mjs";
+import { explorerPresets } from "./garden-explorer-rules.mjs";
 import { createHash } from "node:crypto";
+import {
+  explorerAvailable,
+  explorerStoryIds,
+} from "./garden-explorer-rules.mjs";
 import { z } from "zod";
 import {
   compare,
@@ -63,6 +68,10 @@ const choiceOption = z.strictObject({
     .optional(),
 });
 const effect = z.discriminatedUnion("kind", [
+  z.strictObject({
+    kind: z.literal("explorer"),
+    story: z.enum(explorerStoryIds),
+  }),
   z.strictObject({
     kind: z.literal("choice"),
     story: z.enum(["rain_cat", "hedgehog", "sketch", "trader", "tea"]),
@@ -177,6 +186,7 @@ const condition = z.union([
     days: z.array(z.number().int().min(1).max(7)).min(1).max(7),
   }),
 ]);
+export const gardenEventCapacity = 78;
 export const eventPool = z
   .strictObject({
     rate: z.number().min(0).max(1),
@@ -192,7 +202,7 @@ export const eventPool = z
       }),
     ),
   })
-  .refine(({ entries }) => Object.keys(entries).length <= 48);
+  .refine(({ entries }) => Object.keys(entries).length <= gardenEventCapacity);
 export const legacyEvents = eventPool.parse({
   rate: 0.4,
   entries: {
@@ -368,7 +378,7 @@ const storyPresets = {
 export function withStoryEvents(pool, availableCrops) {
   const entries = { ...pool.entries };
   for (const [id, preset] of Object.entries(storyPresets)) {
-    if (Object.keys(entries).length >= 48) break;
+    if (Object.keys(entries).length >= gardenEventCapacity) break;
     if (Object.hasOwn(entries, id)) continue;
     const expanded = structuredClone(preset);
     for (const { cost } of expanded.effect.options ?? []) {
@@ -387,6 +397,7 @@ export const defaultEvents = eventPool.parse({
   entries: {
     ...legacyEvents.entries,
     ...storyPresets,
+    ...explorerPresets,
     merchant: {
       ...legacyEvents.entries.merchant,
       effect: {
@@ -702,6 +713,11 @@ export function eventOdds(settings, ctx, weather) {
     (id) => {
       const { effect } = pool.entries[id];
       if (guaranteed && id !== fullMoon) return "full_moon";
+      if (
+        effect.kind === "explorer" &&
+        !explorerAvailable(effect.story, ctx, weather)
+      )
+        return "story_unavailable";
       if (
         (effect.kind === "choice" || effect.kind === "story") &&
         !storyEligible(effect, ctx, weather, settings)

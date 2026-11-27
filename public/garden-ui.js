@@ -288,8 +288,8 @@ function renderGarden() {
       });
       pendingAction = undefined;
       const status = shared.gardenReceipt(garden, action, receipt);
-      show(garden, shared.gardenEventOperation(action.kind) ? status : "");
-      return shared.gardenEventOperation(action.kind) ? "" : status;
+      show(garden, shared.gardenEventOperation(action, garden) ? status : "");
+      return shared.gardenEventOperation(action, garden) ? "" : status;
     });
   }
   page.addEventListener("change", ({ target }) => {

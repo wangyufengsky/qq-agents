@@ -5,10 +5,10 @@ import { gardenGifts } from "../../public/garden-art/gifts.js";
 /** @typedef {import("node:sqlite").DatabaseSync} Database */
 /** @typedef {import("./garden-service.mjs").State} State */
 /** @typedef {import("./garden-items.mjs").GiftContext} GiftContext */
-/** @typedef {{id:string,cropId:string,quality:string,plantId?:string}} Lot */
-/** @typedef {{cropId:string,cropName:string,quality:string,plantId?:string,maturedDay?:number,carers?:string[]}} Ingredient */
+/** @typedef {{id:string,cropId:string,quality:string,plantId?:string,leafShape?:string}} Lot */
+/** @typedef {{cropId:string,cropName:string,quality:string,plantId?:string,maturedDay?:number,carers?:string[],leafShape?:string}} Ingredient */
 /** @typedef {{recipeId:string,ingredients:Ingredient[]}} CraftMeta */
-/** @typedef {{price:number,count:number,crops:string[],quality?:string,facility?:true,requirements:string[]}} Recipe */
+/** @typedef {{price:number,count:number,crops:string[],quality?:string,facility?:true,leaf?:true,requirements:string[]}} Recipe */
 
 const flowers = [
   "sunflower",
@@ -17,6 +17,8 @@ const flowers = [
   "mistbell",
   "hydrangea",
   "chamomile",
+  "morning-glory",
+  "balsam",
 ];
 
 /** @type {Record<string,Recipe>} */
@@ -27,6 +29,13 @@ const recipes = {
     crops: flowers,
     quality: "perfect",
     requirements: ["1 份完美品质的花类收成"],
+  },
+  "craft-lambs-ear-bookmark": {
+    price: 10,
+    count: 1,
+    crops: ["lambs-ear"],
+    leaf: true,
+    requirements: ["1 份带完整绒叶的绒耳草收成"],
   },
   "craft-strawberry-jam": {
     price: 12,
@@ -70,7 +79,12 @@ export const gardenRecipeId = z.enum(
 function harvestLots(db) {
   return db
     .prepare(
-      `SELECT id,crop_id,quality,plant_id FROM garden_harvests WHERE quantity>0 ORDER BY rowid`,
+      `SELECT lot.id,lot.crop_id,lot.quality,lot.plant_id,
+       CASE WHEN lot.crop_id='lambs-ear' THEN (
+         SELECT json_extract(fact.detail,'$.leafShape') FROM garden_facts fact
+         WHERE fact.type='harvest' AND json_extract(fact.detail,'$.harvestId')=lot.id
+       ) END AS leaf_shape
+       FROM garden_harvests lot WHERE lot.quantity>0 ORDER BY lot.rowid`,
     )
     .all()
     .map((row) => ({
@@ -78,6 +92,7 @@ function harvestLots(db) {
       cropId: String(row.crop_id),
       quality: String(row.quality),
       ...(row.plant_id && { plantId: String(row.plant_id) }),
+      ...(typeof row.leaf_shape === "string" && { leafShape: row.leaf_shape }),
     }));
 }
 
@@ -85,7 +100,8 @@ function harvestLots(db) {
 function accepts(recipe, lot) {
   return (
     recipe.crops.includes(lot.cropId) &&
-    (!recipe.quality || lot.quality === recipe.quality)
+    (!recipe.quality || lot.quality === recipe.quality) &&
+    (!recipe.leaf || !!lot.leafShape)
   );
 }
 
@@ -117,7 +133,7 @@ export function gardenCraftRecipes(db, hasRack) {
 
 /** @param {Database} db @param {State} state @param {Lot} lot @param {GiftContext} context */
 function provenance(db, state, lot, context) {
-  const { cropId, quality, plantId } = lot;
+  const { cropId, quality, plantId, leafShape } = lot;
   const cropName = state.settings.crops[cropId]?.name ?? cropId;
   if (!plantId) return { cropId, cropName, quality };
   const harvest = db
@@ -155,6 +171,7 @@ function provenance(db, state, lot, context) {
       typeof harvest?.crop_name === "string" ? harvest.crop_name : cropName,
     quality,
     plantId,
+    ...(leafShape && { leafShape }),
     ...(typeof harvest?.matured_day === "number" && {
       maturedDay: harvest.matured_day,
     }),

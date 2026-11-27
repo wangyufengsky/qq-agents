@@ -916,6 +916,21 @@
   inset: 0 0 0 auto;
   transform: scaleX(-1);
 }
+.garden-plot .garden-plot-condition {
+  color: #526649;
+  line-height: 1.2;
+}
+.garden-explorer-project {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--garden-line);
+  border-radius: 6px;
+  background: #f4f3e6;
+}
+.garden-explorer-project h3,
+.garden-explorer-project p {
+  margin: 0 0 6px;
+}
 .garden-choice {
   min-width: 0;
   padding: 8px 0;
