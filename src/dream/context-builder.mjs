@@ -42,7 +42,7 @@ function cognitionLine(items, caches, budget) {
   }
 
   return items.length
-    ? `长期认知（本轮资料。根据认识状态理解，遇到分歧按原文核对。标为 disputed 或 archived 时，停止沿用该 ID 的旧认知。fromPrivate 仅用于调整理解与表达，不要主动提起其他私聊内容）：${JSON.stringify(items)}${summaries.length ? `\n\n醒来摘要（同属本轮参考资料）：${JSON.stringify(summaries)}` : ""}`
+    ? `长期认知（本轮资料。根据认识状态理解，遇到分歧按原文核对。标为 disputed、archived 或 deleted 时，停止沿用该 ID 的旧认知。fromPrivate 仅用于调整理解与表达，不要主动提起其他私聊内容）：${JSON.stringify(items)}${summaries.length ? `\n\n醒来摘要（同属本轮参考资料）：${JSON.stringify(summaries)}` : ""}`
     : "";
 }
 /** @param {any} runtime @param {{agentId:string,conversation:string}} ctx @param {{fresh:boolean,personIds?:string[]}} options @returns {PreparedOpening|null} */
@@ -63,6 +63,15 @@ function cognitionOpening(runtime, ctx, { fresh, personIds = [] }) {
   /** @type {Record<string,number>} */
   const shown = fresh ? {} : { ...previouslyShown };
   const people = new Set(personIds);
+  // A deletion status can invalidate a previously delivered item even when
+  // its last supporting source was erased. No deleted material is projected.
+  const purgeRevision = prepared(
+    db,
+    "SELECT 1 FROM cognition_revisions WHERE agent_id=? AND cognition_id=? AND version=? AND op='PURGE_REBUILD'",
+  );
+  const purged = (/** @type {Cognition} */ row) =>
+    row.status === "disputed" &&
+    !!purgeRevision.get(agentId, row.id, row.version);
   const { read } = dreamSources(runtime, ctx, watermarks);
   const candidate = prepared(
     db,
@@ -85,7 +94,7 @@ function cognitionOpening(runtime, ctx, { fresh, personIds = [] }) {
   );
   let core = role.dream.budget.contextCoreChars,
     scene = role.dream.budget.contextSceneChars;
-  /** @type {{item:OpeningItem,fingerprints:Map<string,string>}[]} */
+  /** @type {{item:OpeningItem,fingerprints:Map<string,string>,removed?:boolean}[]} */
   const candidates = [];
   for (const row of rows) {
     if (core < 1 && scene < 1) break;
@@ -94,11 +103,13 @@ function cognitionOpening(runtime, ctx, { fresh, personIds = [] }) {
     if ((own ? core : scene) < 1) continue;
     /** @type {Map<string,string>} */
     const fingerprints = new Map();
-    const evidence = visibleCognitionEvidence(db, row, (id) => {
-      const source = read(id);
-      if (source) fingerprints.set(id, source.fingerprint);
-      return source;
-    });
+    const evidence = purged(row)
+      ? []
+      : visibleCognitionEvidence(db, row, (id) => {
+          const source = read(id);
+          if (source) fingerprints.set(id, source.fingerprint);
+          return source;
+        });
     if (!evidence) continue;
     const sourceScopes = /** @type {string[]} */ (
       JSON.parse(row.source_scopes_json)
@@ -122,6 +133,25 @@ function cognitionOpening(runtime, ctx, { fresh, personIds = [] }) {
     if (own) core -= size;
     else scene -= size;
     candidates.push({ item, fingerprints });
+  }
+  const stillPresent = prepared(
+    db,
+    "SELECT 1 FROM cognitions WHERE agent_id=? AND id=?",
+  );
+  const removed = /** @type {{key:string,value:number}[]} */ (
+    prepared(
+      db,
+      `SELECT s.key,s.value FROM json_each(?) s WHERE NOT EXISTS (
+        SELECT 1 FROM cognitions c WHERE c.agent_id=? AND c.id=s.key
+      ) ORDER BY s.key`,
+    ).all(JSON.stringify(shown), agentId)
+  );
+  for (const { key, value } of removed) {
+    const item = { id: key, version: value, status: "deleted" };
+    const size = JSON.stringify(item).length + 1;
+    if (size > scene) continue;
+    scene -= size;
+    candidates.push({ item, fingerprints: new Map(), removed: true });
   }
   const cacheQuery = prepared(
     db,
@@ -156,7 +186,17 @@ function cognitionOpening(runtime, ctx, { fresh, personIds = [] }) {
       const items = [],
         evidenceIds = new Set();
       if (currentRole.dream?.enabled && currentRole.dream.cognitive.enabled)
-        for (const { item, fingerprints } of candidates) {
+        for (const { item, fingerprints, removed } of candidates) {
+          if (removed) {
+            if (
+              currentShown[item.id] === item.version &&
+              !stillPresent.get(agentId, item.id)
+            ) {
+              items.push(item);
+              delete currentShown[item.id];
+            }
+            continue;
+          }
           if (item.version <= (currentShown[item.id] ?? 0)) continue;
           if (item.status && !currentShown[item.id]) continue;
           const record = /** @type {Cognition|undefined} */ (
@@ -168,12 +208,14 @@ function cognitionOpening(runtime, ctx, { fresh, personIds = [] }) {
             )
           );
           if (!record) continue;
-          const evidence = visibleCognitionEvidence(db, record, (id) => {
-            const source = currentSources.read(id);
-            return source && source.fingerprint === fingerprints.get(id)
-              ? source
-              : null;
-          });
+          const evidence = purged(record)
+            ? []
+            : visibleCognitionEvidence(db, record, (id) => {
+                const source = currentSources.read(id);
+                return source && source.fingerprint === fingerprints.get(id)
+                  ? source
+                  : null;
+              });
           if (!evidence || evidence.length !== fingerprints.size) continue;
           items.push(item);
           currentShown[item.id] = item.version;

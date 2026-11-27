@@ -57,6 +57,27 @@ export function dreamSources(runtime, ctx, limits) {
     );
   };
 
+  /** @param {string} id @param {number} beforeRevisionRow */
+  const diaryBefore = (id, beforeRevisionRow) =>
+    /** @type {SourceRow|undefined} */ (
+      prepared(
+        db,
+        `SELECT r.rowid AS seq,r.* FROM ${SOURCES.diaries.from}
+        WHERE d.agent_id=? AND r.id=? AND r.rowid<?
+        ORDER BY r.rowid DESC LIMIT 1`,
+      ).get(ctx.agentId, id, beforeRevisionRow)
+    );
+
+  /** @param {string} id @param {number} revision */
+  const diaryRevision = (id, revision) =>
+    /** @type {SourceRow|undefined} */ (
+      prepared(
+        db,
+        `SELECT r.rowid AS seq,r.* FROM ${SOURCES.diaries.from}
+        WHERE d.agent_id=? AND r.id=? AND r.revision=?`,
+      ).get(ctx.agentId, id, revision)
+    );
+
   /** @param {Partition} partition @param {SourceRow} row @param {Set<string>} [seen] @param {boolean} [provenanceOnly] @returns {DreamSource|null} */
   function project(partition, row, seen = new Set(), provenanceOnly = false) {
     if ((!provenanceOnly && row.seq > limits[partition]) || seen.has(row.id))
@@ -99,18 +120,12 @@ export function dreamSources(runtime, ctx, limits) {
         scopes.add(sourceScope(source));
       if (typeof payload.sourceEventId === "string") {
         const parent = get("events", payload.sourceEventId);
-        if (
-          !parent ||
-          parent.seq >= row.seq ||
-          !boundary.allowed({
-            id: parent.id,
-            conversation: parent.conversation,
-            payload: JSON.parse(parent.payload),
-          }) ||
-          memory.recallAnnotation(parent.id).recalled
-        )
-          return null;
-        scopes.add(sourceScope(parent.conversation));
+        const source =
+          parent &&
+          parent.seq < row.seq &&
+          project("events", parent, new Set([...seen, id]), true);
+        if (!source) return null;
+        for (const scope of source.sourceScopes) scopes.add(scope);
       }
       observed =
         (row.kind === "message.received" &&
@@ -142,17 +157,18 @@ export function dreamSources(runtime, ctx, limits) {
         return null;
       for (const evidence of metadata.evidence ?? []) {
         if (typeof evidence !== "string") continue;
-        if (evidence.startsWith("context:"))
+        if (evidence.startsWith("context:")) {
           scopes.add(sourceScope(evidence.slice(8)));
-        const event = get("events", evidence);
-        const diary = event ? undefined : get("diaries", evidence);
-        if (event || diary) {
-          const source = event
-            ? project("events", event, seen, true)
-            : diary && project("diaries", diary, new Set([...seen, id]), true);
-          if (!source) return null;
-          for (const scope of source.sourceScopes) scopes.add(scope);
+          continue;
         }
+        const event = get("events", evidence);
+        const diary = event ? undefined : diaryBefore(evidence, row.seq);
+        const ancestors = new Set([...seen, id]);
+        const source = event
+          ? project("events", event, ancestors, true)
+          : diary && project("diaries", diary, ancestors, true);
+        if (!source) return null;
+        for (const scope of source.sourceScopes) scopes.add(scope);
       }
       scopeId = sourceScope(conversation);
       text = `${row.title}\n${row.body}`;
@@ -192,7 +208,10 @@ export function dreamSources(runtime, ctx, limits) {
         if (target.type === "event" || target.type === "diary") {
           const targetPartition =
             target.type === "event" ? "events" : "diaries";
-          const targetRow = get(targetPartition, target.id);
+          const targetRow =
+            targetPartition === "diaries" && target.revision > 0
+              ? diaryRevision(target.id, target.revision)
+              : get(targetPartition, target.id);
           const targetSource =
             targetRow && project(targetPartition, targetRow, seen, true);
           if (!targetSource) return null;

@@ -252,6 +252,8 @@ export function planDreamPatch(runtime, snapshot, input, access) {
       throw Error("DREAM_VERSION_CONFLICT");
     if (before) reserve(before);
     if (op.op === "ARCHIVE" && before) {
+      if (!visibleCognitionEvidence(db, before, read))
+        throw Error("RECALL_SOURCE_NOT_ALLOWED");
       changes.push({
         op: op.op,
         reason: op.reason,
@@ -451,8 +453,9 @@ function writeCognition(
   if (before) {
     const result = prepared(
       db,
-      `UPDATE cognitions SET content=?,epistemic_status=?,importance=?,confidence=?,status=?,version=?,from_private=?,source_scopes_json=?,merged_into=?,valid_to=?,updated_at=? WHERE agent_id=? AND id=? AND version=?`,
+      `UPDATE cognitions SET subject_key=?,content=?,epistemic_status=?,importance=?,confidence=?,status=?,version=?,from_private=?,source_scopes_json=?,merged_into=?,valid_to=?,updated_at=? WHERE agent_id=? AND id=? AND version=?`,
     ).run(
+      after.subject_key,
       after.content,
       after.epistemic_status,
       after.importance,
@@ -653,7 +656,7 @@ export function rollbackCognition(
       throw Error("DREAM_VERSION_CONFLICT");
     const historical = prepared(
       db,
-      "SELECT after_json FROM cognition_revisions WHERE agent_id=? AND cognition_id=? AND version=?",
+      "SELECT after_json FROM cognition_revisions WHERE agent_id=? AND cognition_id=? AND version=? AND op<>'PURGE_REBUILD'",
     ).get(agentId, id, version);
     if (!historical) throw Error("DREAM_ROLLBACK_FAILED");
     const original = /** @type {Cognition} */ (
@@ -667,9 +670,10 @@ export function rollbackCognition(
     if (!visibleCognitionEvidence(db, original, read))
       throw Error("DREAM_ROLLBACK_FAILED");
     if (
-      before.status !== "active" &&
+      (before.status !== "active" ||
+        before.subject_key !== original.subject_key) &&
       original.status === "active" &&
-      duplicate(db, agentId, before.scope_id, before.subject_key)
+      duplicate(db, agentId, original.scope_id, original.subject_key)
     )
       throw Error("DREAM_DUPLICATE_SUBJECT_KEY");
     const time = new Date(runtime.now()).toISOString();
@@ -719,22 +723,10 @@ export function deleteCognition(runtime, agentId, id, expectedVersion) {
       ).run(agentId, id, expectedVersion).changes !== 1
     )
       throw Error("DREAM_VERSION_CONFLICT");
-    for (const table of ["cognition_evidence", "cognition_revisions"])
-      prepared(
-        db,
-        `DELETE FROM ${table} WHERE agent_id=? AND cognition_id=?`,
-      ).run(agentId, id);
-    prepared(
-      db,
-      "DELETE FROM cognition_links WHERE agent_id=? AND (from_id=? OR to_id=?)",
-    ).run(agentId, id, id);
-    prepared(
-      db,
-      "UPDATE cognitions SET merged_into=NULL WHERE agent_id=? AND merged_into=?",
-    ).run(agentId, id);
-    refreshAfterAdminChange(
+    rebuildAwakening(
       runtime,
       agentId,
+      checkpoint(db, agentId).version,
       new Date(runtime.now()).toISOString(),
     );
     return { id, deleted: true };

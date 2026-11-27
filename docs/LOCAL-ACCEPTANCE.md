@@ -4,6 +4,12 @@ Antigravity CLI 使用独立的 `scripts/antigravity-acceptance.mjs`，验收会
 
 `npm run verify` 不调用模型，不使用真实 QQ。`scripts/local-acceptance.mjs` 是需要显式选择的真实后端验收工具，会消耗所选模型的额度。所有 QQ 写请求都由脚本内的回环 HTTP/WS 网关记录，不能投递到真实 QQ。
 
+## 梦境后端协议验收
+
+在独立 worktree 安装依赖后，运行 `node --test --test-timeout=120000 test/dream-backends.test.mjs`。测试使用正式适配器，分别连接本机的 DSH HTTP/WebSocket 与桥接 MCP、Codex App Server 标准输入输出、OpenAI-compatible Chat Completions HTTP、Antigravity headless stream-json 与桥接 MCP。每种后端分别执行认知梦和幻想梦，每种模式各有一次成功和一次失败。
+
+检查每轮新建的模型会话或请求链、工具目录、提交结果，以及认知、幻想故事和检查点的最终状态。数据、模型回复及远端协议端点均由测试夹具提供。真实模型的认知归纳或文学创作质量、部署账号连接情况须在对应部署另行验证。
+
 ## 桌宠跨平台验收
 
 在 macOS 和已登录的 Windows 桌面分别使用独立数据目录、一个测试角色和合成窗口。记录精确提交、Electron 版本、显示器缩放和后端。用临时窗口验证以下步骤。

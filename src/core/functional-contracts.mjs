@@ -101,9 +101,11 @@ const contracts = Object.freeze({
   "dream-cognitive": Object.freeze({
     createExchange(runtime, ctx, { profile, snapshot, mode }) {
       const focus =
-        mode === "deep"
-          ? "深度睡眠（deep）：优先关联已有认知、核查证据冲突和同步明确纠正；可用 LINK 建立关系、用 WEAKEN 标记争议。"
-          : "小憩（nap）：优先整理新增经历，使用 ADD 补充、UPDATE 更新、REINFORCE 强化有新证据支持的长期认知。";
+        mode === "long"
+          ? "长梦（long）：查阅已有认知，用 MERGE 合并可核实的重复项，用 ARCHIVE 归档已过时的认知，控制常驻认知量。先审阅本批新增资料和纠正，再提交整理结果；不能仅以条数判定一条认知过时。"
+          : mode === "deep"
+            ? "深度睡眠（deep）：优先关联已有认知、核查证据冲突和同步明确纠正；可用 LINK 建立关系、用 WEAKEN 标记争议。"
+            : "小憩（nap）：优先整理新增经历，使用 ADD 补充、UPDATE 更新、REINFORCE 强化有新证据支持的长期认知。";
       const { read } = dreamSources(runtime, ctx, snapshot.cursorEnd);
       return {
         conversation: `${profile.instanceKey}/${snapshot.runId}`,
