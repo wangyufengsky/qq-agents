@@ -546,6 +546,53 @@ export class ContextLifecycle {
     );
     return page.items.find(({ id }) => id === latest.id) ?? null;
   }
+  inputBudget(ctx, state) {
+    const usage = state.usage || {};
+    const native = ctx.nativeContextBudget;
+    if (!state.session || !native || state.session.id !== native.sessionId)
+      return usage;
+    return {
+      capacityTokens: native.capacityTokens || usage.capacityTokens,
+      outputReserveTokens: native.outputTokens,
+      contextTokens: native.contextTokens ?? usage.contextTokens,
+    };
+  }
+  async loadContextBudget(ctx, backend) {
+    const state = this.runtime.memory.bind(ctx.agentId).state(ctx.conversation);
+    if (state.session?.backend !== "dsh") return;
+    // An optional projection may be unavailable on older hosts. Native input
+    // admission still verifies the session and reports connection failures.
+    const budget = await backend
+      .readContextBudget(
+        state.session,
+        ctx.controller.signal,
+        state.usage?.outputReserveTokens,
+        state.backendContract,
+      )
+      .catch(() => null);
+    ctx.controller.signal.throwIfAborted();
+    if (budget)
+      ctx.nativeContextBudget = { ...budget, sessionId: state.session.id };
+  }
+  retireBeforeInput(ctx, state, addedTokens) {
+    if (state.session?.backend !== "dsh") return false;
+    const policy = this.runtime.agent(ctx.agentId).contextPolicy;
+    const {
+      outputReserveTokens,
+      capacityTokens = policy.capacityTokens,
+      contextTokens: used,
+    } = this.inputBudget(ctx, state);
+    if (!(outputReserveTokens > 0)) return false;
+    if (
+      !Number.isFinite(used) ||
+      used + addedTokens + policy.reserveTokens <
+        policy.hardRatio * (capacityTokens - outputReserveTokens)
+    )
+      return false;
+    this.retire(ctx.agentId, ctx.conversation, "capacity-guard", ctx);
+    delete ctx.nativeContextBudget;
+    return true;
+  }
   prepare(ctx, backend, reasons, tools = []) {
     if (ctx.controller.signal.aborted) throw Error("ABORTED");
     const r = this.runtime,
@@ -948,6 +995,15 @@ export class ContextLifecycle {
     )
       .filter(Boolean)
       .join("\n\n");
+    const imageAllowance =
+      a.behavior.imageInput.enabled &&
+      history.items.some((item) =>
+        item.payload?.segments?.some((segment) => segment.type === "image"),
+      )
+        ? a.behavior.imageInput.maxImages * 4096
+        : 0;
+    if (this.retireBeforeInput(ctx, s, prompt.length + imageAllowance))
+      return this.prepare(ctx, backend, reasons, tools);
     m.setState(ctx.conversation, {
       ...m.state(ctx.conversation),
       loadedSelfVersion: self.version,
@@ -1060,6 +1116,7 @@ export class ContextLifecycle {
       m.identity.get("model_turns", ctx.turnId)?.status !== "running"
     )
       return;
+    const prior = this.inputBudget(ctx, s);
     if (Number.isFinite(value?.contextTokens) && value.contextTokens >= 0)
       m.setState(ctx.conversation, {
         ...s,
@@ -1067,11 +1124,14 @@ export class ContextLifecycle {
         // capacity of this session instead of reverting to the fallback.
         // Retirement clears usage before a different session/model starts.
         usage: {
+          ...(prior.outputReserveTokens !== undefined && {
+            outputReserveTokens: prior.outputReserveTokens,
+          }),
           ...value,
           capacityTokens:
             Number.isFinite(value.capacityTokens) && value.capacityTokens > 0
               ? value.capacityTokens
-              : s.usage?.capacityTokens,
+              : prior.capacityTokens,
           at: this.runtime.now(),
         },
       });
@@ -1138,7 +1198,16 @@ export class ContextLifecycle {
       ["failed", "cancelled"].includes(outcome) ||
       ctx.controller.signal.aborted
     ) {
-      if (ctx.desktopUnified) return;
+      const failure = record?.backendFailures?.at(-1);
+      if (
+        ctx.desktopUnified &&
+        !(
+          outcome === "failed" &&
+          failure?.backend === "dsh" &&
+          failure.code === "CONTEXT_WINDOW_EXCEEDED"
+        )
+      )
+        return;
       if (
         outcome === "failed" &&
         ctx.retainBackendSession &&
@@ -1177,16 +1246,19 @@ export class ContextLifecycle {
       );
       return;
     }
+    const prior = this.inputBudget(ctx, s);
     let usage = s.usage;
     if (!usage || usage.at < ctx.turnStartedAt)
       usage = {
         source: "estimated",
         contextTokens:
-          (s.usage?.contextTokens || 0) +
+          (prior.contextTokens || 0) +
           ctx.estimatedAdded +
           (ctx.estimatedImageTokens || 0),
-        capacityTokens:
-          s.usage?.capacityTokens || a.contextPolicy.capacityTokens,
+        ...(prior.outputReserveTokens !== undefined && {
+          outputReserveTokens: prior.outputReserveTokens,
+        }),
+        capacityTokens: prior.capacityTokens || a.contextPolicy.capacityTokens,
         at: r.now(),
         basis:
           "tracked text characters plus tool output and image allowance; conservative estimate, excludes unknown backend overhead",
@@ -1195,8 +1267,14 @@ export class ContextLifecycle {
       usage.capacityTokens > 0
         ? usage.capacityTokens
         : a.contextPolicy.capacityTokens;
-    const ratio =
-      (usage.contextTokens + a.contextPolicy.reserveTokens) / capacity;
+    const pressureRatio = (current) =>
+      (current.contextTokens + a.contextPolicy.reserveTokens) /
+      Math.max(
+        1,
+        (current.capacityTokens || capacity) -
+          (current.outputReserveTokens || 0),
+      );
+    const ratio = pressureRatio(usage);
     const lifecycle = {
       ...s.lifecycle,
       status:
@@ -1262,9 +1340,7 @@ export class ContextLifecycle {
           current = latest.usage;
         const reduced =
           current?.source === "measured" &&
-          (current.contextTokens + a.contextPolicy.reserveTokens) /
-            (current.capacityTokens > 0 ? current.capacityTokens : capacity) <=
-            a.contextPolicy.recoverRatio;
+          pressureRatio(current) <= a.contextPolicy.recoverRatio;
         m.setState(ctx.conversation, {
           ...latest,
           lifecycle: {
@@ -1272,10 +1348,7 @@ export class ContextLifecycle {
             lastCompactAt: r.now(),
             compactResult: reduced ? "recovered" : "no-confirmed-reduction",
             status: reduced ? "active" : "organizing",
-            ratio: current
-              ? (current.contextTokens + a.contextPolicy.reserveTokens) /
-                (current.capacityTokens > 0 ? current.capacityTokens : capacity)
-              : ratio,
+            ratio: current ? pressureRatio(current) : ratio,
           },
         });
         if (reduced) return;

@@ -48,8 +48,10 @@ export async function prepareMessageImages(runtime, ctx, backend, prepared) {
   const timer = setTimeout(() => controller.abort(), policy.timeoutMs);
   let bytes = 0,
     frames = 0;
+  const budget = runtime.contexts.inputBudget(ctx, state);
   const capacity =
-    state.usage?.capacityTokens || agent.contextPolicy.capacityTokens;
+    (budget.capacityTokens || agent.contextPolicy.capacityTokens) -
+    (budget.outputReserveTokens || 0);
   // This is a conservative allowance, not a provider-specific token measurement.
   const frameBudget = Math.max(
     0,
@@ -58,7 +60,7 @@ export async function prepareMessageImages(runtime, ctx, backend, prepared) {
         capacity / 4,
         capacity * agent.contextPolicy.hardRatio -
           agent.contextPolicy.reserveTokens -
-          (ctx.initialSession ? 0 : state.usage?.contextTokens || 0),
+          (ctx.initialSession ? 0 : budget.contextTokens || 0),
       ) / 4096,
     ),
   );

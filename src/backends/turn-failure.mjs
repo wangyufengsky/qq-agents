@@ -49,6 +49,8 @@ export class BackendTurnFailure extends Error {
 /** @param {any} reason @param {unknown} turnId */
 export function dshTurnFailure(reason, turnId) {
   const code = reason?.error?.code;
+  if (reason?.kind === "error" && code === "CONTEXT_WINDOW_EXCEEDED")
+    return new BackendTurnFailure("dsh", code, "context-limit", String(turnId));
   if (reason?.kind === "error" && code === "MALFORMED_RESPONSE")
     return new BackendTurnFailure(
       "dsh",

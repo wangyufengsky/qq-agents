@@ -169,6 +169,8 @@ export class TurnRunner {
       // turn reads what was said rather than a placeholder.
       const transcribing = runtime.transcripts.settle(ctx);
       if (transcribing) await transcribing;
+      if (backend.readContextBudget && state.session?.backend === "dsh")
+        await runtime.contexts.loadContextBudget(ctx, backend);
       const prepared = runtime.contexts.prepare(ctx, backend, reasons, tools);
       if (ctx.initialSession)
         ctx.estimatedAdded += JSON.stringify(tools).length;
@@ -266,13 +268,23 @@ export class TurnRunner {
         runtime.faults.delete(agentId);
     } catch (e) {
       outcome = controller.signal.aborted ? "cancelled" : "failed";
-      if (!controller.signal.aborted)
-        runtime.diagnostics.report(Error("BACKEND_TURN_FAILED", { cause: e }), {
-          component: "runtime",
-          agentId,
-          conversation,
-        });
       const failure = failureSummary(e);
+      const contextLimit =
+        failure?.backend === "dsh" && failure.category === "context-limit";
+      if (!controller.signal.aborted)
+        runtime.diagnostics.report(
+          Error(
+            contextLimit
+              ? "DSH_CONTEXT_WINDOW_EXCEEDED"
+              : "BACKEND_TURN_FAILED",
+            { cause: e },
+          ),
+          {
+            component: "runtime",
+            agentId,
+            conversation,
+          },
+        );
       ctx.backendTurnUnverified =
         failure?.backend === "dsh" && failure.category === "event-stream";
       const classifiedFault =

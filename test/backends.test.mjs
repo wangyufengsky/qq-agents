@@ -770,7 +770,10 @@ test("DSH resumes measured capacity from a fresh subscription snapshot", async (
         sessionId,
         snapshot: {
           projections: {
-            values: { contextPressure: { contextWindow: 1000000 } },
+            values: {
+              contextPressure: { contextWindow: 1000000 },
+              contextTimeline: { maxOutputTokens: 180000 },
+            },
           },
         },
       },
@@ -804,8 +807,20 @@ test("DSH resumes measured capacity from a fresh subscription snapshot", async (
   emit("assistant/message", {
     usage: { inputTokens: 60387, outputTokens: 1864 },
   });
+  emit("request/header", { header: { config: { maxTokens: 32000 } } });
+  emit("assistant/message", {
+    usage: { inputTokens: 61000, outputTokens: 1500 },
+  });
+  emit("request/header", { header: { config: {} } });
+  emit("assistant/message", {
+    usage: { inputTokens: 63000, outputTokens: 10 },
+  });
   emit("turn/end", { turn: "t", reason: { kind: "completed" } });
   await run;
+  assert.deepEqual(
+    usage.map((u) => u.outputReserveTokens),
+    [180000, 32000, null],
+  );
   assert.equal(usage[0].contextTokens, 62251);
   assert.equal(usage[0].capacityTokens, 1000000);
   assert.equal(
