@@ -6,6 +6,11 @@ import {
 import { explorerPresets } from "./garden-explorer-rules.mjs";
 import { createHash } from "node:crypto";
 import {
+  memoryAvailable,
+  memoryPresets,
+  memoryStoryIds,
+} from "./garden-memory-rules.mjs";
+import {
   tableAvailable,
   tablePresets,
   tableStoryIds,
@@ -73,6 +78,7 @@ const choiceOption = z.strictObject({
     .optional(),
 });
 const effect = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("memory"), story: z.enum(memoryStoryIds) }),
   z.strictObject({ kind: z.literal("table"), story: z.enum(tableStoryIds) }),
   z.strictObject({
     kind: z.literal("explorer"),
@@ -406,6 +412,7 @@ export const defaultEvents = eventPool.parse({
     ...storyPresets,
     ...explorerPresets,
     ...tablePresets,
+    ...memoryPresets,
     merchant: {
       ...legacyEvents.entries.merchant,
       effect: {
@@ -721,6 +728,11 @@ export function eventOdds(settings, ctx, weather) {
     (id) => {
       const { effect } = pool.entries[id];
       if (guaranteed && id !== fullMoon) return "full_moon";
+      if (
+        effect.kind === "memory" &&
+        !memoryAvailable(effect.story, ctx, weather)
+      )
+        return "story_unavailable";
       if (
         effect.kind === "table" &&
         !tableAvailable(effect.story, ctx, weather)

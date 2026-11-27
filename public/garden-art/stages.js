@@ -27,6 +27,9 @@ const cropStages = /** @type {Record<string, string[]>} */ ({
   perilla: ["发芽", "舒叶", "叶片可采"],
   "sweet-corn": ["发芽", "抽穗", "玉米可收"],
   "pocket-pumpkin": ["发芽", "坐果", "南瓜可收"],
+  "drift-gourd": ["发芽", "爬藤", "葫芦可收"],
+  "paper-moon": flowerStages,
+  "echo-tuberose": flowerStages,
 });
 
 /** @param {{status:string,growth:number,crop:{hours:number}}|null|undefined} plant */

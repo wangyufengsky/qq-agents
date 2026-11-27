@@ -23,6 +23,9 @@ const explorerCrops = new Set([
   "perilla",
   "sweet-corn",
   "pocket-pumpkin",
+  "drift-gourd",
+  "paper-moon",
+  "echo-tuberose",
 ]);
 const stages = ["seedling", "growing", "mature", "withered"];
 const weatherKinds = ["sun", "cloud", "drizzle", "storm"];

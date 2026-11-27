@@ -288,6 +288,7 @@ const gardenEventKinds = {
   story: "花园小景",
   explorer: "花园探索",
   table: "花园小聚",
+  memory: "花园现场记忆",
 };
 const gardenEventCapacity = 78;
 const gardenStoryKinds = {
@@ -321,6 +322,18 @@ const gardenStoryKinds = {
     menu: "写错名字的菜牌",
     color_swap: "双碟色卡",
     window_lamp: "借灯窗边",
+  },
+  memory: {
+    drift_gourd: "漂流葫芦回来了",
+    old_sign: "旧木牌翻过面",
+    old_photo: "九格里的旧照片",
+    future_jar: "给未来的自己埋个罐子",
+    paper_shadow: "纸月拓影夜",
+    group_photo: "园丁缺席的合影",
+    poem: "一首没写完的四行诗",
+    wind_note: "风铃今天多响了一声",
+    seed_memory: "从种子认出你",
+    gate_display: "这一季门口挂什么",
   },
   story: {
     migratory_bird: "候鸟借宿",
@@ -842,6 +855,7 @@ async function gardenRunEventTrial(form) {
     weather_unavailable: "实况天气不可用",
     story_unavailable: "当前花园条件无法触发",
     table_unavailable: "当前花园条件无法触发",
+    memory_unavailable: "当前花园条件无法触发",
     explorer_unavailable: "当前花园里没有需要的探索条件",
     full_moon: "满月事件优先",
     zero_weight: "权重为零",

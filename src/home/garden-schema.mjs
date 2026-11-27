@@ -20,6 +20,7 @@ export function initializeGardenTables(db) {
       status TEXT NOT NULL,
       snapshot TEXT
     );
+    CREATE INDEX IF NOT EXISTS garden_archive_crop_date ON garden_plant_archive(crop_id,planted_clock);
     CREATE TABLE IF NOT EXISTS garden_facts (
       id INTEGER PRIMARY KEY,
       type TEXT NOT NULL,
@@ -250,5 +251,27 @@ export function initializeGardenTables(db) {
     CREATE INDEX IF NOT EXISTS garden_table_loan_event ON garden_table_loans(event_id);
     CREATE INDEX IF NOT EXISTS garden_table_active_projects ON garden_events(day)
       WHERE json_extract(value,'$.kind')='table' AND json_extract(value,'$.game.active')=1;
+  `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS garden_memory_coverage (id INTEGER PRIMARY KEY CHECK(id=1), first_day INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS garden_memory_days (
+      day INTEGER PRIMARY KEY,
+      captured_at INTEGER NOT NULL,
+      revision INTEGER NOT NULL,
+      plots TEXT NOT NULL,
+      occupied INTEGER NOT NULL,
+      weather TEXT NOT NULL,
+      weather_marks TEXT NOT NULL,
+      rain_clock REAL
+    );
+    CREATE INDEX IF NOT EXISTS garden_memory_rain_clock ON garden_memory_days(rain_clock) WHERE rain_clock IS NOT NULL;
+    CREATE TABLE IF NOT EXISTS garden_memory_returns (id TEXT PRIMARY KEY,due_day INTEGER NOT NULL);
+    CREATE INDEX IF NOT EXISTS garden_memory_return_due ON garden_memory_returns(due_day);
+    CREATE TABLE IF NOT EXISTS garden_memory_followups (
+      id TEXT PRIMARY KEY,day INTEGER NOT NULL,title TEXT NOT NULL,text TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS garden_gate_history (season INTEGER PRIMARY KEY,day INTEGER NOT NULL,display TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS garden_memory_active_projects ON garden_events(day)
+      WHERE json_extract(value,'$.kind')='memory' AND json_extract(value,'$.game.active')=1;
   `);
 }

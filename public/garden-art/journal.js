@@ -17,6 +17,32 @@ const types = {
   followup: "隔日回响",
   almanac: "图鉴点亮",
 };
+export async function showGardenCard(container, read) {
+  container.textContent = "正在生成花卡…";
+  try {
+    const { png, text } = await read();
+    if (!container.isConnected) return;
+    const bytes = Uint8Array.from(atob(png), (c) => c.charCodeAt(0));
+    const bitmap = await createImageBitmap(
+      new Blob([bytes], { type: "image/png" }),
+    );
+    if (!container.isConnected) {
+      bitmap.close();
+      return;
+    }
+    const canvas = document.createElement("canvas");
+    canvas.setAttribute("role", "img");
+    canvas.setAttribute("aria-label", text);
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    canvas.getContext("2d").drawImage(bitmap, 0, 0);
+    bitmap.close();
+    container.replaceChildren(canvas);
+  } catch {
+    container.textContent = "花卡暂未生成，可以先读文字记录。";
+  }
+}
+
 export function bindGardenJournal(root, read, esc, showTab, onStatus) {
   let state,
     plantId,
@@ -169,25 +195,9 @@ export function bindGardenJournal(root, read, esc, showTab, onStatus) {
   async function card() {
     const container = root.querySelector("[data-journal-image]");
     if (!container || !plantId) return;
-    container.textContent = "正在生成花卡…";
-    try {
-      const { png, text } = await read({ view: "plant_image", plantId });
-      if (!container.isConnected) return;
-      const bytes = Uint8Array.from(atob(png), (c) => c.charCodeAt(0));
-      const bitmap = await createImageBitmap(
-        new Blob([bytes], { type: "image/png" }),
-      );
-      const canvas = document.createElement("canvas");
-      canvas.setAttribute("role", "img");
-      canvas.setAttribute("aria-label", text);
-      canvas.width = bitmap.width;
-      canvas.height = bitmap.height;
-      canvas.getContext("2d").drawImage(bitmap, 0, 0);
-      bitmap.close();
-      container.replaceChildren(canvas);
-    } catch {
-      container.textContent = "花卡暂未生成，可先查看下方的文字手帐。";
-    }
+    await showGardenCard(container, () =>
+      read({ view: "plant_image", plantId }),
+    );
   }
   function renderDigest() {
     const target = root.querySelector("[data-journal-note]");
