@@ -93,7 +93,7 @@ test("journal pagination pins the fact set and digest cursors isolate reader gen
     settings.turnLimit = 0;
   });
   const { plantId } = act({ kind: "plant", plot: 1, cropId: "clover" });
-  const page = garden.timeline({ limit: 1 });
+  const page = garden.timeline({ limit: 2 });
   const original = garden.timeline().entries;
   act({ kind: "water", plot: 1, plantId });
   const next = garden.timeline({ limit: 1, cursor: page.nextCursor });

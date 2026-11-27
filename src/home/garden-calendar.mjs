@@ -2,8 +2,16 @@
 import { GardenNeighbors } from "./garden-neighbors.mjs";
 import { gardenPlantRef } from "./garden-journal.mjs";
 import { GardenEvents } from "./garden-events.mjs";
+import { settleGardenRumors } from "./garden-companion.mjs";
 import { randomUUID } from "node:crypto";
-import { closePlantDay, DAY, HOUR, projectPlant } from "./garden-rules.mjs";
+import {
+  CHAMOMILE,
+  closePlantDay,
+  DAY,
+  HOUR,
+  neighborBuffs,
+  projectPlant,
+} from "./garden-rules.mjs";
 import {
   defaultWeather,
   drawWeather,
@@ -189,38 +197,56 @@ export class GardenCalendar {
   /** @param {State} state @param {GardenDay} current @param {number} elapsed */
   project(state, current, elapsed) {
     const { boundary, weather, slow } = this.conditions(current, elapsed);
+    if (elapsed >= boundary)
+      this.projectSegment(state, boundary, current.weather, slow);
+    this.projectSegment(state, elapsed, weather, slow);
+    return weather;
+  }
+
+  /** @param {State} state @param {number} elapsed @param {import("./garden-weather.mjs").Weather} weather @param {number} slow */
+  projectSegment(state, elapsed, weather, slow) {
+    // Protection starts at the exact maturity crossing, even after a long offline jump.
+    let until = elapsed;
+    for (const { id, plant, sheltered } of state.plots) {
+      if (
+        plant?.cropId !== CHAMOMILE ||
+        plant.status !== "growing" ||
+        plant.settledAt >= until
+      )
+        continue;
+      const preview = projectPlant(
+        plant,
+        until,
+        weather,
+        sheltered,
+        slow,
+        undefined,
+        neighborBuffs(state, id).length > 0,
+      );
+      if (preview.maturedAt !== undefined && preview.status === "mature")
+        until = Math.max(plant.settledAt + 0.001, preview.maturedAt);
+    }
+    until = Math.min(elapsed, until);
     state.plots = state.plots.map((entry) => {
       const original = entry.plant;
-      if (!original) return entry;
+      if (!original || original.settledAt >= until) return entry;
       const ref = gardenPlantRef(entry.id, original);
-      /** @type {NonNullable<Parameters<typeof projectPlant>[5]>} */
-      const recordGrowth = (before, after, clock, clockPerGrowth) =>
-        this.journal.growth(
-          ref,
-          original,
-          before,
-          after,
-          clock,
-          clockPerGrowth,
-        );
-      const beforeFlip =
-        elapsed >= boundary && original.settledAt < boundary
-          ? projectPlant(
-              original,
-              boundary,
-              current.weather,
-              entry.sheltered,
-              slow,
-              recordGrowth,
-            )
-          : original;
       const plant = projectPlant(
-        beforeFlip,
-        elapsed,
+        original,
+        until,
         weather,
         entry.sheltered,
         slow,
-        recordGrowth,
+        (before, after, clock, clockPerGrowth, projected) =>
+          this.journal.growth(
+            ref,
+            projected,
+            before,
+            after,
+            clock,
+            clockPerGrowth,
+          ),
+        neighborBuffs(state, entry.id).length > 0,
       );
       if (plant.status === "withered" && original.status !== "withered")
         this.journal.record({
@@ -233,7 +259,17 @@ export class GardenCalendar {
       if (plant !== original) this.journal.updatePlant(plant);
       return { ...entry, plant };
     });
-    return weather;
+    if (until < elapsed) this.projectSegment(state, elapsed, weather, slow);
+  }
+
+  /** @param {State} state @param {GardenDay} current @param {number} elapsed */
+  settleNeighbors(state, current, elapsed) {
+    const { weather, boundary } = this.conditions(current, elapsed);
+    this.neighbors.settle(state, current.day, elapsed, this.journal, {
+      before: current.weather.kind,
+      after: weather.kind,
+      boundary,
+    });
   }
 
   /** @param {State} state @param {number} elapsed @param {number} now */
@@ -249,7 +285,7 @@ export class GardenCalendar {
       while (current.day < day) {
         const { weather, day: priorDay } = current;
         const closingWeather = this.project(state, current, priorDay * DAY);
-        this.neighbors.settle(state, priorDay, priorDay * DAY, this.journal);
+        this.settleNeighbors(state, current, priorDay * DAY);
         state.plots = state.plots.map((entry) => {
           if (!entry.plant) return entry;
           const plant = closePlantDay(
@@ -296,8 +332,9 @@ export class GardenCalendar {
         );
     }
     const effectiveWeather = this.project(state, current, elapsed);
-    this.neighbors.settle(state, current.day, elapsed, this.journal);
+    this.settleNeighbors(state, current, elapsed);
     state.clock = elapsed;
+    settleGardenRumors(this.db, this.journal, current.day, now);
     return { ...current, effectiveWeather };
   }
 }

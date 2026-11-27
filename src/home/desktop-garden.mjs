@@ -17,6 +17,7 @@ function operatorView(garden) {
   return {
     initialized: true,
     plots: garden.plots,
+    boardNotes: garden.boardNotes,
     priorities: garden.priorities,
     balance: garden.balance,
     pauseReason: garden.pauseReason,

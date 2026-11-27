@@ -129,6 +129,7 @@
     "src/home/garden-neighbors.mjs",
     "src/home/garden-weather.mjs",
     "src/home/garden-console.mjs",
+    "src/home/garden-companion.mjs",
     "src/home/garden-public.mjs",
     "src/home/desktop-garden.mjs",
     "src/home/garden-rules.mjs",

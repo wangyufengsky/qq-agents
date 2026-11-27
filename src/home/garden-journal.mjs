@@ -3,7 +3,7 @@ import {
   gardenGrowthStages,
   gardenStageLabel,
 } from "../../public/garden-art/stages.js";
-import { DAY, HOUR } from "./garden-rules.mjs";
+import { DAY, gardenVariantDetail, HOUR } from "./garden-rules.mjs";
 
 /** @typedef {import("./garden-rules.mjs").Plant} Plant */
 /** @typedef {import("./garden-service.mjs").State} State */
@@ -24,6 +24,9 @@ const factLabels = /** @type {Record<string,string>} */ ({
   visitor_reward: "领取访客礼物",
   event: "花园事件",
   discovery: "邻株发现",
+  rumor: "园艺传闻",
+  variant: "收获惊喜",
+  followup: "花园回响",
 });
 
 /** @param {number} plot @param {Plant} plant */
@@ -60,10 +63,16 @@ function factText(fact) {
     .join("与");
   const label =
     fact.type === "discovery" && fact.detail?.phase === "pollen"
-      ? "发现蓝紫色花粉，品种尚未揭晓"
+      ? `发现${typeof fact.detail.hint === "string" ? fact.detail.hint : "蓝紫色花粉"}，品种尚未揭晓`
       : (fact.detail?.stage ?? factLabels[fact.type] ?? fact.type);
   const event = fact.detail?.name;
-  return [plants, label, typeof event === "string" ? event : ""]
+  const variant = fact.detail?.variantName;
+  return [
+    plants,
+    label,
+    typeof variant === "string" ? variant : "",
+    typeof event === "string" ? event : "",
+  ]
     .filter(Boolean)
     .join(" · ");
 }
@@ -77,11 +86,17 @@ function publicPlantSnapshot(plant) {
     status: plant.status,
     growth: plant.growth,
     quality: plant.quality,
+    ...gardenVariantDetail(plant),
+    harvestCount: plant.harvestCount ?? 0,
     fertilizer: plant.fertilizer,
     water: plant.water,
     dry: plant.dry,
     witheredReason: plant.witheredReason,
-    crop: { hours: plant.crop.hours, name: plant.crop.name },
+    crop: {
+      hours: plant.crop.hours,
+      name: plant.crop.name,
+      maxHarvests: plant.crop.maxHarvests ?? 1,
+    },
     rules: {
       careMode: plant.rules.careMode,
       lowWater: plant.rules.lowWater,
@@ -92,13 +107,17 @@ function publicPlantSnapshot(plant) {
 
 /** @param {Record<string,unknown>} detail */
 function publicFactDetail(detail) {
-  const { stage, name, eventId, cropId, phase } = detail;
+  const { stage, name, eventId, cropId, phase, variant, variantName, hint } =
+    detail;
   return {
     ...(typeof stage === "string" && { stage }),
     ...(typeof name === "string" && { name }),
     ...(typeof eventId === "string" && { eventId }),
     ...(typeof cropId === "string" && { cropId }),
     ...(typeof phase === "string" && { phase }),
+    ...(typeof variant === "string" && { variant }),
+    ...(typeof variantName === "string" && { variantName }),
+    ...(typeof hint === "string" && { hint }),
   };
 }
 
@@ -146,6 +165,18 @@ function factView(row, publicView) {
     minute,
     time,
     text: factText(fact),
+  };
+}
+
+/** @param {Record<string,import("node:sqlite").SQLOutputValue>} row @param {boolean} publicView */
+function digestFact(row, publicView) {
+  if (row.type !== "private_gift") return factView(row, publicView);
+  return {
+    id: Number(row.id),
+    type: "gift",
+    text: "你收到了新的花园礼物，可查看自己的礼物栏。",
+    day: Math.floor(Number(row.clock) / DAY) + 1,
+    plants: [],
   };
 }
 
@@ -227,13 +258,14 @@ export class GardenJournal {
       const threshold = plant.crop.hours * ratio;
       if (before < threshold && threshold <= after)
         this.record({
-          key: `${plant.id}:${type}`,
+          key: `${plant.id}:${type}${plant.harvestCount ? `:${plant.harvestCount}` : ""}`,
           type,
           clock: clock + (threshold - before) * clockPerGrowth,
           plants: [ref],
           source: event ? "event" : "growth",
           detail: {
             stage: gardenStageLabel(ref.cropId, type),
+            ...(type === "mature" && gardenVariantDetail(plant)),
             ...(event && { eventId: event.id, name: event.name }),
           },
         });
@@ -446,7 +478,7 @@ export class GardenJournal {
     const rows = this.db
       .prepare(
         `SELECT * FROM garden_facts AS fact
-      WHERE id<=:through
+      WHERE id<=:through AND type!='private_gift'
         AND (:factId IS NULL OR id=:factId)
         AND (:startClock IS NULL OR clock>=:startClock)
         AND (:endClock IS NULL OR clock<:endClock)
@@ -581,6 +613,49 @@ export class GardenJournal {
     };
   }
 
+  /** @param {Identity} actor */
+  readerKey(actor) {
+    return readerKey(actor);
+  }
+
+  /** @param {Identity} actor */
+  highlights(actor) {
+    const key = readerKey(actor);
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM garden_facts
+      WHERE id > COALESCE((SELECT through_id FROM garden_journal_reads WHERE reader=?),0)
+      AND clock IS NOT NULL
+      AND (type IN ('discovery','event','variant','followup','rumor','visitor','visitor_reward')
+        OR (type='private_gift' AND json_extract(detail,'$.reader')=?))
+      ORDER BY id DESC LIMIT 5`,
+      )
+      .all(key, key);
+    return rows.map((row) => {
+      const { id, type, text, day, plants } = digestFact(row, true);
+      if (type === "gift") return { id, type, text };
+      const plots = (plants ?? []).map(({ plot }) => plot);
+      const detail =
+        type === "discovery" ? publicFactDetail(parse(row.detail)) : undefined;
+      return {
+        id,
+        type,
+        day,
+        text,
+        ...(plots.length && { plots }),
+        ...(detail?.phase === "seed" &&
+          typeof detail.name === "string" && {
+            surprise: {
+              kind: "neighbor_seed",
+              title: `邻株结种：${detail.name}`,
+              detail: `花园手帐记录了${plots.map((plot) => `${plot} 号地`).join("与")}的邻株结种。`,
+              factId: id,
+            },
+          }),
+      };
+    });
+  }
+
   /** @param {Identity} actor @param {boolean} publicView */
   digest(actor, publicView) {
     const row = this.db
@@ -590,13 +665,18 @@ export class GardenJournal {
     const rows = this.db
       .prepare(
         `SELECT * FROM garden_facts
-      WHERE id>? AND id<=? AND clock IS NOT NULL AND type IN
-        ('mature','discovery','visitor','visitor_reward','harvest','water','fertilize','planted','withered')
-      ORDER BY CASE type WHEN 'discovery' THEN 0 WHEN 'mature' THEN 1
+      WHERE id>? AND id<=? AND clock IS NOT NULL
+      AND (type IN ('mature','discovery','visitor','visitor_reward','harvest','water','fertilize','planted','withered','event','variant','followup','rumor')
+        OR (type='private_gift' AND json_extract(detail,'$.reader')=?))
+      ORDER BY CASE type WHEN 'discovery' THEN 0 WHEN 'private_gift' THEN 0 WHEN 'mature' THEN 1
         WHEN 'visitor' THEN 2 WHEN 'visitor_reward' THEN 2 WHEN 'harvest' THEN 3
         WHEN 'water' THEN 4 WHEN 'fertilize' THEN 4 ELSE 5 END, id DESC LIMIT 3`,
       )
-      .all(Number(row?.through_id ?? 0), through);
+      .all(
+        Number(row?.through_id ?? 0),
+        through,
+        publicView ? null : readerKey(actor),
+      );
     const overview = !row
       ? this.db
           .prepare(
@@ -608,7 +688,7 @@ export class GardenJournal {
           .get()
       : undefined;
     return {
-      entries: rows.map((item) => factView(item, publicView)),
+      entries: rows.map((item) => digestFact(item, publicView)),
       initial: !row,
       ...(overview && {
         overview: {

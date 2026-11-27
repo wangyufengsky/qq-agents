@@ -65,7 +65,7 @@ test("an existing memory database opens without initializing a garden and backup
     const defaults = garden.initialize(0);
     assert.equal(defaults.plots.length, 9);
     assert.equal(defaults.balance, 1000);
-    assert.equal(Object.keys(defaults.settings.crops).length, 8);
+    assert.equal(Object.keys(defaults.settings.crops).length, 14);
     assert.equal(defaults.ledger.length, 1);
     garden.syncClock(0, true);
     garden.act(0, admin, {

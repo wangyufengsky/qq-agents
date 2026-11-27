@@ -121,8 +121,24 @@ test("actual Chromium produces a shareable nine-tile PNG and renders the desktop
   const tiles = page.locator(".desktop-garden-tile");
   await tiles.first().getByText("空地", { exact: true }).waitFor();
   assert.equal(await tiles.count(), 9);
+  const boardNote = page.locator('[data-garden-note="garden"]').locator("..");
+  await boardNote.locator("summary").click();
+  await boardNote.getByLabel("园艺小黑板").fill("记得看第二块地");
+  await boardNote.getByRole("button", { name: "保存留言" }).click();
+  await page
+    .locator(".garden-note-text")
+    .filter({ hasText: "记得看第二块地" })
+    .waitFor();
   const detail = page.locator(".garden-inspector");
   await tiles.nth(1).click();
+  const plotNote = page.locator('[data-garden-note="2"]').locator("..");
+  await plotNote.locator("summary").click();
+  await plotNote.getByLabel("地块便签").fill("下午搭棚");
+  await plotNote.getByRole("button", { name: "保存留言" }).click();
+  await page
+    .locator(".garden-note-text")
+    .filter({ hasText: "下午搭棚" })
+    .waitFor();
   await detail.getByRole("button", { name: "搭棚", exact: true }).click();
   await detail.getByText("有棚", { exact: true }).waitFor();
   assert.equal(await tiles.nth(1).getAttribute("aria-pressed"), "true");
@@ -175,7 +191,7 @@ test("actual Chromium produces a shareable nine-tile PNG and renders the desktop
   assert.equal(png.readUInt32BE(16), 720);
   assert.doesNotMatch(
     JSON.stringify(payload),
-    /plant-clover|soil-normal|cropId/,
+    /plant-clover|soil-normal|cropId|记得看第二块地|下午搭棚/,
   );
   const readArt = async (file) => {
     if (file === "soil-normal.webp") return Buffer.from("broken WebP");
