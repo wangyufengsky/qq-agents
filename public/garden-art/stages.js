@@ -20,6 +20,10 @@ const cropStages = /** @type {Record<string, string[]>} */ ({
   sunberry: ["发芽", "结果", "可收成"],
   succulent: ["扎根", "饱满", "晶莹"],
   four_leaf_clover: ["发芽", "展叶", "可收成"],
+  "morning-glory": flowerStages,
+  "rattle-pea": ["发芽", "结荚", "豌豆荚成熟"],
+  balsam: ["发芽", "现蕾", "弹籽荚成熟"],
+  "lambs-ear": ["发芽", "展叶", "绒叶长成"],
 });
 
 /** @param {{status:string,growth:number,crop:{hours:number}}|null|undefined} plant */

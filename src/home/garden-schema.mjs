@@ -91,6 +91,9 @@ export function initializeGardenTables(db) {
       builder_kind TEXT NOT NULL,
       builder_id TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS garden_explorer_editions (
+      edition INTEGER PRIMARY KEY
+    );
     CREATE TABLE IF NOT EXISTS garden_story_presets (
       id INTEGER PRIMARY KEY CHECK (id=1)
     );
@@ -211,4 +214,15 @@ export function initializeGardenTables(db) {
       .get()
   )
     db.exec("ALTER TABLE garden_harvests ADD COLUMN plant_id TEXT");
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS garden_explorer_comparisons (
+      id TEXT PRIMARY KEY,
+      trigger_clock REAL NOT NULL,
+      payload TEXT NOT NULL,
+      result TEXT
+    );
+    CREATE INDEX IF NOT EXISTS garden_explorer_due ON garden_explorer_comparisons(trigger_clock) WHERE result IS NULL;
+    CREATE INDEX IF NOT EXISTS garden_doorstep_active ON garden_events(day)
+      WHERE json_extract(value,'$.effect.story')='door_peas' AND json_extract(value,'$.game.packet.taken')=0;
+  `);
 }

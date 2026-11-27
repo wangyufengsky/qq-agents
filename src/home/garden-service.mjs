@@ -21,10 +21,16 @@ import {
 import { GardenClock } from "./garden-clock.mjs";
 import { GardenCalendar } from "./garden-calendar.mjs";
 import { defaultWeather } from "./garden-weather.mjs";
+import { explorerPresets } from "./garden-explorer-rules.mjs";
 import { legacyEvents, withStoryEvents } from "./garden-event-rules.mjs";
 import {
   cropId,
   DAY,
+  explorerPlantView,
+  LAMBS_EAR,
+  lambsEarLeafShape,
+  RATTLE_PEA,
+  rattlePeaCount,
   HOUR,
   defaultGardenSettings,
   gardenSettings,
@@ -105,7 +111,7 @@ const inputSchema = z.strictObject({
       buyPrice: quotedPrice.optional(),
     }),
     z.strictObject({
-      kind: z.enum(["water", "fertilize", "harvest", "clear"]),
+      kind: z.enum(["water", "fertilize", "harvest", "clear", "pop_seed_pod"]),
       plot,
       plantId,
     }),
@@ -169,6 +175,41 @@ export class GardenService {
             )
             .run(JSON.stringify(saved));
         }
+      });
+    // Each edition is added once so that later restarts respect the gardener's edits.
+    if (
+      !this.db
+        .prepare("SELECT 1 FROM garden_explorer_editions WHERE edition=1")
+        .get()
+    )
+      store.transaction(() => {
+        if (
+          !this.db
+            .prepare(
+              "INSERT OR IGNORE INTO garden_explorer_editions VALUES (1)",
+            )
+            .run().changes
+        )
+          return;
+        const row = this.db
+          .prepare("SELECT settings FROM garden_state WHERE id=1")
+          .get();
+        if (!row) return;
+        const saved = JSON.parse(String(row.settings));
+        const pool = saved.events ?? structuredClone(legacyEvents);
+        const missing = Object.entries(explorerPresets).filter(
+          ([id]) => !Object.hasOwn(pool.entries, id),
+        );
+        if (!missing.length) return;
+        saved.events = {
+          ...pool,
+          entries: { ...pool.entries, ...Object.fromEntries(missing) },
+        };
+        this.db
+          .prepare(
+            "UPDATE garden_state SET settings=?,settings_revision=settings_revision+1 WHERE id=1",
+          )
+          .run(JSON.stringify(saved));
       });
     const state = this.load();
     if (state)
@@ -453,6 +494,15 @@ export class GardenService {
       ...state,
       plots: state.plots.map((plot) => ({
         ...plot,
+        plant: plot.plant && {
+          ...plot.plant,
+          explorer: explorerPlantView(
+            plot.plant,
+            state.clock,
+            current.effectiveWeather.kind,
+            plot.sheltered,
+          ),
+        },
         note: notes.plots[plot.id] ?? null,
       })),
       boardNotes: notes,
@@ -478,7 +528,12 @@ export class GardenService {
       fullMoon:
         neighbors.nightScene.period === "night" &&
         this.calendar.fullMoon(nightDay),
-      followups: this.calendar.events.stories.view(current.day),
+      followups: [
+        ...this.calendar.events.stories.view(current.day),
+        ...this.calendar.events.explorers.followups(state.clock),
+      ]
+        .sort((a, b) => b.day - a.day)
+        .slice(0, 5),
     };
   }
 
@@ -958,6 +1013,11 @@ export class GardenService {
               ...(usedEarthworm && { usedEarthworm }),
             };
           }
+          case "pop_seed_pod": {
+            if (!this.calendar.events.popBalsamPod(state, entry, actor))
+              throw Error("GARDEN_PLANT_STATE");
+            return { plot: entry.id, plantId: plant.id, seedBag: true };
+          }
           case "harvest": {
             if (plant.status !== "mature" || !plant.quality)
               throw Error("GARDEN_PLANT_STATE");
@@ -1034,6 +1094,9 @@ export class GardenService {
                 harvestCount,
                 harvestId,
                 cropName,
+                ...(cropId === LAMBS_EAR && {
+                  leafShape: lambsEarLeafShape(plant),
+                }),
                 ...(plant.maturedAt !== undefined && {
                   maturedDay: Math.floor(plant.maturedAt / DAY) + 1,
                 }),
@@ -1072,6 +1135,10 @@ export class GardenService {
               harvestCount,
               maxHarvests,
               regrowing,
+              ...(cropId === RATTLE_PEA && {
+                peasPerPod: rattlePeaCount(plant),
+                podCount: quantity / rattlePeaCount(plant),
+              }),
               ...(surprise && { surprise }),
               ...(almanacUnlock && { almanacUnlock }),
             };

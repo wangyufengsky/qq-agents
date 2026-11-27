@@ -1,9 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { GardenExplorers } from "./garden-explorers.mjs";
 import { GardenStories } from "./garden-stories.mjs";
 import { gardenPlantRef } from "./garden-journal.mjs";
 import {
   adjustPlantQuality,
+  BALSAM,
+  RATTLE_PEA,
+  rattlePeaCount,
   DAY,
   gardenPlantRules,
   grantGrowth,
@@ -33,6 +37,7 @@ const trial = weatherTrialInput.extend({
  * {kind:"nuisance",effect:Extract<EventEffect,{kind:"nuisance"}>,startedAt:number,handledAt?:number} |
  * {kind:"weather_flip",effect:Extract<EventEffect,{kind:"weather_flip"}>,targetWeather:import("./garden-weather.mjs").Weather,forecast:import("./garden-weather.mjs").Weather} |
  * {kind:"harvest_bonus",effect:Extract<EventEffect,{kind:"harvest_bonus"}>,progress?:{current:number,required:number}} |
+ * {kind:"explorer",effect:Extract<EventEffect,{kind:"explorer"}>,game?:any,description?:string} |
  * {kind:"choice",effect:Extract<EventEffect,{kind:"choice"}>} |
  * {kind:"story",effect:Extract<EventEffect,{kind:"story"}>,target?:{plot:number,plantId:string,cropName:string}} |
  * {kind:"mystery_box",effect:Extract<EventEffect,{kind:"mystery_box"}>,purchased?:number,available?:boolean}
@@ -43,6 +48,7 @@ export class GardenEvents {
     this.changeBalance = changeBalance;
     this.journal = journal;
     this.stories = new GardenStories(db, journal);
+    this.explorers = new GardenExplorers(db, journal);
   }
 
   /** @param {number|undefined} day @returns {GardenEvent|null} */
@@ -59,7 +65,12 @@ export class GardenEvents {
         "SELECT day,value FROM garden_events WHERE value IS NOT NULL AND value<>'null' ORDER BY day DESC LIMIT 14",
       )
       .all()
-      .map((row) => ({ day: row.day, ...JSON.parse(row.value) }));
+      .map((row) => {
+        const value = JSON.parse(row.value);
+        if (value.kind !== "explorer") return { day: row.day, ...value };
+        const { game: _game, ...visible } = value;
+        return { day: row.day, ...visible };
+      });
   }
 
   update(day, entry) {
@@ -70,6 +81,7 @@ export class GardenEvents {
 
   draw(state, ctx, weather, seed, day) {
     const entry = drawGardenEvent(state.settings, ctx, weather, seed, day);
+    if (entry?.kind === "explorer") this.explorers.start(entry, state);
     if (entry)
       this.journal.record({
         type: entry.kind === "visitor" ? "visitor" : "event",
@@ -193,6 +205,7 @@ export class GardenEvents {
   /** @returns {GardenEvent|null} */
   view(day, state, claimed) {
     const entry = claimed ?? this.get(day);
+    if (entry?.kind === "explorer") return this.explorers.view(entry, state);
     if (
       entry?.kind === "story" &&
       entry.effect.story === "migratory_bird" &&
@@ -246,14 +259,16 @@ export class GardenEvents {
   }
 
   harvestQuantity(day, plot, plant) {
+    const base =
+      plant.cropId === RATTLE_PEA ? rattlePeaCount(plant) : plant.crop.yield;
     const entry = this.get(day);
     if (
       entry?.kind !== "harvest_bonus" ||
       entry.effect.effect !== "twin" ||
       entry.status !== "open"
     )
-      return plant.crop.yield;
-    const quantity = plant.crop.yield * (entry.effect.multiplier ?? 2);
+      return base;
+    const quantity = base * (entry.effect.multiplier ?? 2);
     this.update(day, {
       ...entry,
       status: "claimed",
@@ -262,10 +277,34 @@ export class GardenEvents {
     return quantity;
   }
 
-  grantMysteryBag(state, quantity = 1) {
+  /** @param {import("./garden-service.mjs").State} state
+   * @param {import("./garden-service.mjs").Plot} plot
+   * @param {import("./garden-service.mjs").Actor} actor */
+  popBalsamPod(state, plot, actor) {
+    const { plant } = plot;
+    if (plant?.cropId !== BALSAM || plant.status !== "mature")
+      throw Error("GARDEN_PLANT_STATE");
+    if (plant.podPopped) return false;
+    this.grantMysteryBag(state, 1, { cropId: BALSAM, crop: plant.crop });
+    plant.podPopped = true;
+    this.journal.updatePlant(plant);
+    this.journal.record({
+      type: "event",
+      source: "action",
+      clock: state.clock,
+      actor,
+      plants: [gardenPlantRef(plot.id, plant)],
+      detail: { stage: "凤仙弹籽，公共仓库多了一袋种子", cropId: BALSAM },
+      key: `balsam-seed:${plant.id}`,
+    });
+    return true;
+  }
+
+  grantMysteryBag(state, quantity = 1, fallback) {
     const candidates = mysteryCrops
       .filter((id) => state.settings.crops[id]?.enabled)
       .map((cropId) => ({ cropId, crop: state.settings.crops[cropId] }));
+    if (!candidates.length && fallback) candidates.push(fallback);
     if (!candidates.length) throw Error("GARDEN_SEED_UNAVAILABLE");
     const insert = this.db.prepare(
       "INSERT INTO garden_mystery_bags VALUES(?,?,?)",
@@ -485,6 +524,28 @@ export class GardenEvents {
 
   perform(day, now, actor, action, state, owner) {
     const entry = this.get(day);
+    if (action.kind === "choose_event") {
+      const sourceDay = Number(action.eventId.split(":")[0]);
+      const project = sourceDay < day ? this.get(sourceDay) : entry;
+      if (
+        project?.id === action.eventId &&
+        project.kind === "explorer" &&
+        (sourceDay === day || this.explorers.isActive(project))
+      ) {
+        if (!owner) throw Error("GARDEN_ROLE_UNAVAILABLE");
+        const outcome = this.explorers.perform(
+          project,
+          state,
+          action,
+          actor,
+          owner,
+          now,
+          this.popBalsamPod.bind(this),
+        );
+        this.update(sourceDay, project);
+        return { eventId: project.id, outcome };
+      }
+    }
     if (!entry || entry.id !== action.eventId)
       throw Error("GARDEN_EVENT_EXPIRED");
     if (action.kind === "choose_event") {

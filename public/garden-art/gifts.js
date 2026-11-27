@@ -29,6 +29,12 @@ export const gardenGifts = {
     usable: false,
     eventOnly: true,
   },
+  "craft-lambs-ear-bookmark": {
+    name: "绒耳叶压花书签",
+    price: 0,
+    usable: false,
+    eventOnly: true,
+  },
   "craft-strawberry-jam": {
     name: "手作草莓果酱",
     price: 0,
@@ -79,7 +85,7 @@ export function isGardenMerchantGift(id) {
   return Object.hasOwn(gardenGifts, id) && !("eventOnly" in gift);
 }
 
-/** @typedef {{ingredients: {cropName:string,quality:string,maturedDay?:number,carers?:string[]}[]}} GardenCraftOrigin */
+/** @typedef {{ingredients: {cropName:string,quality:string,maturedDay?:number,carers?:string[],leafShape?:string}[]}} GardenCraftOrigin */
 /** @param {GardenCraftOrigin|undefined|null} meta */
 export function gardenCraftOrigin(meta) {
   if (!meta?.ingredients?.length) return "";
@@ -96,7 +102,8 @@ export function gardenCraftOrigin(meta) {
       const who = item.carers?.length
         ? `（${item.carers.join("、")}照料）`
         : "";
-      return `${when}${quality ? quality + "品质的" : ""}${item.cropName}${who}`;
+      const shape = item.leafShape ? `（${item.leafShape}）` : "";
+      return `${when}${quality ? quality + "品质的" : ""}${item.cropName}${shape}${who}`;
     })
     .join("；")}`;
 }

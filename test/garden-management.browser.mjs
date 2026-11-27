@@ -730,7 +730,7 @@ test("the management garden builds facilities, crafts with two selected species 
   const recipe = (id) => page.locator(`[data-garden-recipe="${id}"]`);
   const jam = recipe("craft-strawberry-jam");
   const bouquet = recipe("craft-flower-bouquet");
-  assert.equal(await page.locator("[data-garden-recipe]").count(), 6);
+  assert.equal(await page.locator("[data-garden-recipe]").count(), 7);
   await bouquet.getByText("建好干花晾晒架后解锁。", { exact: true }).waitFor();
   const beforeJam = currentBalance();
   await jam.getByRole("button", { name: "制作", exact: true }).click();
@@ -920,9 +920,15 @@ test("event settings import missing previews, round-trip optional effects and co
   });
   const original = v.pool();
   await v.expand("补入新版预设");
-  assert.equal(await v.form.locator("[data-event-preset]:checked").count(), 27);
+  assert.equal(
+    await v.form.locator("[data-event-preset]:checked").count(),
+    Object.keys(defaultEvents.entries).length - 4,
+  );
   await v.form.getByRole("button", { name: "把选中预设加入表单" }).click();
-  assert.equal(await v.form.locator("[data-event-entry]").count(), 33);
+  assert.equal(
+    await v.form.locator("[data-event-entry]").count(),
+    Object.keys(defaultEvents.entries).length + 2,
+  );
   assert.deepEqual(v.pool(), original);
   await v.row("merchant").locator("summary").click();
   await v.row("merchant").getByLabel("可报价种子").selectOption([]);
@@ -1010,9 +1016,9 @@ test("event settings import missing previews, round-trip optional effects and co
   assert.deepEqual(v.errors, []);
 });
 
-test("event preset preview detects the 48-entry cap without changing saved settings", async (t) => {
+test("event preset preview detects the 78-entry cap without changing saved settings", async (t) => {
   const v = await openEventSettings(t, ({ events }) => {
-    for (let i = 1; i <= 18; i++)
+    for (let i = 1; i <= 79 - Object.keys(defaultEvents.entries).length; i++)
       events.entries[`custom-${i}`] = {
         ...structuredClone(events.entries.visitor),
         name: `测试条目 ${i}`,
@@ -1023,16 +1029,22 @@ test("event preset preview detects the 48-entry cap without changing saved setti
   const add = v.form.getByRole("button", { name: "把选中预设加入表单" });
   await add.click();
   await v.page
-    .getByText("超过 48 条上限，请减少选中的预设。", { exact: true })
+    .getByText("超过 78 条上限，请减少选中的预设。", { exact: true })
     .waitFor();
-  assert.equal(await v.form.locator("[data-event-entry]").count(), 21);
+  assert.equal(
+    await v.form.locator("[data-event-entry]").count(),
+    82 - Object.keys(defaultEvents.entries).length,
+  );
   await v.form.locator('[data-event-preset="twin-fruit"]').uncheck();
   await add.click();
-  assert.equal(await v.form.locator("[data-event-entry]").count(), 48);
-  assert.equal(Object.keys(v.pool().entries).length, 21);
+  assert.equal(await v.form.locator("[data-event-entry]").count(), 78);
+  assert.equal(
+    Object.keys(v.pool().entries).length,
+    82 - Object.keys(defaultEvents.entries).length,
+  );
   await v.save();
-  assert.equal(Object.keys(v.pool().entries).length, 48);
-  assert.equal(v.pool().entries["custom-18"].enabled, false);
+  assert.equal(Object.keys(v.pool().entries).length, 78);
+  assert.equal(v.pool().entries["custom-1"].enabled, false);
   assert.equal(v.pool().entries["twin-fruit"], undefined);
   assert.deepEqual(v.errors, []);
 });

@@ -14,6 +14,13 @@ export const cropArtIds = [
   "catnip",
   "mistbell",
 ];
+// Explorer plants use the generic sprout until their own artwork is available.
+const explorerCrops = new Set([
+  "morning-glory",
+  "rattle-pea",
+  "balsam",
+  "lambs-ear",
+]);
 const stages = ["seedling", "growing", "mature", "withered"];
 const weatherKinds = ["sun", "cloud", "drizzle", "storm"];
 const eventKinds = [
@@ -103,7 +110,9 @@ export function gardenLayers({ plant, sheltered }) {
   /** @type {Layer[]} */
   const layers = [{ file: `soil-${soil}.webp`, layer: "soil" }];
   if (sheltered) layers.push({ file: "shelter-back.webp", layer: "rear" });
-  if (plant && cropArtIds.includes(plant.cropId)) {
+  if (plant && explorerCrops.has(plant.cropId))
+    layers.push({ file: "plant-seedling.webp", layer: "plant" });
+  else if (plant && cropArtIds.includes(plant.cropId)) {
     const milestone = gardenStageAt(plant);
     const stage =
       milestone === "sprouted"
@@ -145,8 +154,10 @@ export function gardenIconFile(group, kind) {
         ? `gift-${kind}.webp`
         : "gift-wrapped.webp"
       : null;
-  if (group === "crop")
+  if (group === "crop") {
+    if (explorerCrops.has(kind)) return "plant-seedling.webp";
     return cropArtIds.includes(kind) ? "plant-" + kind + "-mature.webp" : null;
+  }
   if (group === "supply")
     return kind === "fertilizer" ? "supply-fertilizer.webp" : null;
   if (group === "event") kind = eventIcons.get(kind) ?? kind;

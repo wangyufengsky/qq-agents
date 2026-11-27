@@ -335,7 +335,19 @@ export function adminGardenView(runtime, collectVisitor = false) {
     pauseReason,
     priorities: gardenPriorities(state),
     market: marketHarvests(state),
-    eventActions: eventActions(state),
+    eventActions: [
+      ...eventActions(state),
+      ...currentExplorerActions(
+        garden,
+        state,
+        giftPerson(runtime, instanceAdmin),
+      ),
+    ],
+    gardenProjects: garden.calendar.events.explorers.projects(
+      state.day,
+      state,
+      giftPerson(runtime, instanceAdmin),
+    ),
     eventHistory: garden.calendar.events.history(),
     eventPresets: Object.entries(defaultEvents.entries).map(([id, entry]) => ({
       id,
@@ -361,7 +373,7 @@ export function adminGardenWrite(runtime, operation, value) {
   const now = runtime.now();
   if (operation === "weather-trial" || operation === "event-trial")
     return garden.calendar.trial(
-      garden.requireState(),
+      garden.observe(now),
       value,
       operation === "event-trial",
     );
@@ -459,7 +471,11 @@ export function subjectGardenView(
     ...(state.mistbellDiscovered ? ["mistbell"] : []),
     ...(state.sunberryDiscovered ? ["sunberry"] : []),
   ]);
-  const actions = eventActions(state);
+  const owner = giftPerson(runtime, { kind: "agent", id: roleId });
+  const actions = [
+    ...eventActions(state),
+    ...currentExplorerActions(garden, state, owner),
+  ];
   return {
     balance: state.balance,
     scene: {
@@ -472,6 +488,11 @@ export function subjectGardenView(
     boardNotes: state.boardNotes,
     rumors: state.rumors,
     followups: state.followups,
+    gardenProjects: garden.calendar.events.explorers.projects(
+      state.day,
+      state,
+      owner,
+    ),
     almanacSummary: state.almanacSummary,
     ...gardenWorkshop(runtime, state),
     event: event
@@ -565,6 +586,15 @@ export function subjectGardenView(
         harvestCount: plant.harvestCount ?? 0,
         maxHarvests: plant.crop.maxHarvests ?? 1,
         neighborBuffs: neighborBuffs(state, id),
+        ...(plant.explorer && {
+          explorer: plant.explorer,
+          ...(plant.explorer.canPop && {
+            podAction: {
+              kind: "pop_seed_pod",
+              args: { plot: id, plantId: plant.id },
+            },
+          }),
+        }),
       },
     })),
     priorities: gardenPriorities(state),
@@ -728,6 +758,18 @@ export function recordGardenObservation(runtime, roleId, moment, now) {
     },
   });
   return { kind: moment.kind, title: moment.title, evidenceId: record.id };
+}
+
+/** @param {import("./garden-service.mjs").GardenService} garden @param {GardenState} state
+ * @param {import("./garden-items.mjs").Owner} [owner] */
+function currentExplorerActions(garden, state, owner) {
+  return state.event?.kind === "explorer"
+    ? garden.calendar.events.explorers.actions(
+        garden.calendar.events.get(state.day),
+        state,
+        owner,
+      )
+    : [];
 }
 
 /** @param {GardenState} state */
