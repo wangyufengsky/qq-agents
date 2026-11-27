@@ -307,7 +307,7 @@ test("reopening an existing schema 9 installs diary deletion and sanitizes old d
   t.after(() => reopened.close());
   assert.equal(
     reopened.db.prepare("PRAGMA user_version").get().user_version,
-    9,
+    10,
   );
   assert.doesNotMatch(
     JSON.stringify(reopened.bind(role).export().tables.cognition_revisions),
@@ -363,7 +363,7 @@ test("diary provenance erasure reaches older dependent revisions and preserves i
   const revisedAt = db
     .prepare("SELECT updated_at FROM diaries WHERE id=?")
     .get(diary.id).updated_at;
-  runtime.clock = () => new Date(Date.parse(revisedAt) + 1000);
+  runtime.clock = () => new Date(revisedAt);
   commit(
     runtime,
     role,
@@ -554,4 +554,271 @@ test("physical deletion uses the existing core or scene budget on retained QQ se
       assert.ok(!seen[2].prompt.includes(notice));
     });
   }
+});
+
+test("forwarded nodes and card observations lose their root before recall and export", (t) => {
+  const { runtime, store } = fixture(t);
+  const m = store.bind(role);
+  const root = append(m, "root");
+  const node = m.append({
+    dedupe: "node",
+    kind: "forward.node",
+    conversation: scope,
+    body: secret,
+    payload: { rootEventId: root.id },
+  });
+  const card = m.append({
+    dedupe: "card",
+    kind: "app.observation",
+    conversation: scope,
+    body: secret,
+    payload: { app: { source: { eventId: node.id, conversation: scope } } },
+  });
+  commit(runtime, role, add("derived", [card.id], secret));
+  store.db.prepare("DELETE FROM events WHERE id=?").run(root.id);
+  const sources = dreamSources(
+    runtime,
+    { agentId: role, conversation: "@dream" },
+    storyWatermarks,
+  );
+  assert.equal(sources.read(node.id), null);
+  assert.equal(sources.read(card.id), null);
+  assert.doesNotMatch(
+    JSON.stringify(m.export().tables.cognition_revisions),
+    new RegExp(secret),
+  );
+});
+
+test("supersession releases the subject and invalidates a retained session exactly once", (t) => {
+  const cfg = config();
+  cfg.agents[0].dream.enabled = true;
+  const { runtime, store } = fixture(t, { cfg });
+  const memory = store.bind(role);
+  const first = append(memory, "first correction");
+  const args = {
+    personId: "30000",
+    targets: [],
+    kind: "clarification",
+    scope: "claim",
+    oldBelief: "先前",
+    current: "现在",
+  };
+  const boundary = { allowed: () => true, assert() {} };
+  const correct = (event, extra) =>
+    memory.corrections.create(
+      { ...args, ...extra },
+      event,
+      boundary,
+      new Date().toISOString(),
+    );
+  const previous = correct(first, {});
+  commit(runtime, role, add("topic", [previous.id], secret));
+  const { id } = store.db.prepare("SELECT id FROM cognitions").get();
+  const ctx = {
+    agentId: role,
+    conversation: scope,
+    turnId: "current",
+    privateRead: new Set(),
+  };
+  memory.setState(scope, {
+    lastTurnId: ctx.turnId,
+    cognitionsShown: { [id]: 1 },
+  });
+  const next = correct(append(memory, "second correction"), {
+    supersedes: previous.id,
+    current: safe,
+  });
+  const opening = cognitionContext(runtime, ctx, { fresh: false }).refresh();
+  assert.match(opening.line, /"status":"disputed"/);
+  assert.doesNotMatch(opening.line, new RegExp(secret));
+  commitCognitionContext(memory, ctx, opening);
+  assert.equal(
+    cognitionContext(runtime, ctx, { fresh: false }).refresh().line,
+    "",
+  );
+  commit(runtime, role, add("topic", [next.id], safe));
+  assert.equal(
+    store.db
+      .prepare("SELECT content FROM cognitions WHERE status='active'")
+      .get().content,
+    safe,
+  );
+});
+
+test("corrections of group records inherit private evidence, including pre-upgrade cognition", (t) => {
+  const cfg = config();
+  cfg.agents[0].dream.enabled = true;
+  const { runtime, store } = fixture(t, { cfg });
+  const memory = store.bind(role);
+  const privateSource = memory.append({
+    dedupe: "private",
+    conversation: "private:30000",
+    kind: "message.received",
+    body: safe,
+  });
+  const support = append(memory, "group");
+  const note = memory.identity.saveNote(
+    { body: safe, evidence: [privateSource.id], uncertainty: "待核实" },
+    scope,
+    new Date().toISOString(),
+  );
+  const correction = memory.corrections.create(
+    {
+      personId: "30000",
+      oldBelief: "之前",
+      current: safe,
+      targets: [{ type: "note", id: note.id }],
+    },
+    support,
+    { allowed: () => true, assert() {} },
+    new Date().toISOString(),
+  );
+  commit(runtime, role, add("topic", [correction.id]));
+  const row = store.db.prepare("SELECT * FROM cognitions").get();
+  assert.equal(row.from_private, 1);
+  memory.identity.saveNote(
+    {
+      id: note.id,
+      body: "后来修改",
+      evidence: [support.id],
+      uncertainty: "待核实",
+    },
+    scope,
+    new Date().toISOString(),
+  );
+  store.db.exec("UPDATE cognitions SET from_private=0,source_scopes_json='[]'");
+  assert.match(
+    cognitionContext(
+      runtime,
+      { agentId: role, conversation: scope },
+      { fresh: true },
+    ).refresh().line,
+    /"fromPrivate":true/,
+  );
+  store.db.prepare("DELETE FROM events WHERE id=?").run(privateSource.id);
+  assert.equal(
+    store.db.prepare("SELECT status FROM cognitions").get().status,
+    "disputed",
+  );
+});
+
+test("app page chains and individually confirmed forward nodes preserve only their own ancestors", (t) => {
+  const { runtime, store } = fixture(t),
+    memory = store.bind(role);
+  const root = append(memory, "root"),
+    page = append(memory, "page"),
+    first = append(memory, "first-node"),
+    second = append(memory, "second-node");
+  const sent = memory.append({
+    dedupe: "sent",
+    conversation: scope,
+    kind: "message.sent",
+    direction: "out",
+    status: "confirmed",
+    body: "两条转发",
+    payload: { eventIds: [first.id, second.id] },
+  });
+  const nodes = [0, 1].map((index) =>
+    memory.append({
+      dedupe: "copy-" + index,
+      conversation: scope,
+      kind: "forward.node",
+      body: safe,
+      payload: {
+        index,
+        source: "confirmed-send-sources",
+        rootEventId: root.id,
+        confirmedEventId: sent.id,
+      },
+    }),
+  );
+  const card = memory.append({
+    dedupe: "second-page",
+    conversation: scope,
+    kind: "app.observation",
+    body: secret,
+    payload: { app: { source: { eventId: root.id }, evidence: [page.id] } },
+  });
+  commit(
+    runtime,
+    role,
+    add("card", [card.id], secret),
+    add("one", [nodes[0].id], secret),
+    add("two", [nodes[1].id], safe),
+  );
+  for (const id of [page.id, first.id])
+    store.db.prepare("DELETE FROM events WHERE id=?").run(id);
+  assert.deepEqual(
+    store.db
+      .prepare("SELECT subject_key FROM cognitions WHERE status='active'")
+      .all()
+      .map((row) => row.subject_key),
+    ["two"],
+  );
+  assert.doesNotMatch(
+    JSON.stringify(memory.export().tables.cognition_revisions),
+    new RegExp(secret),
+  );
+});
+
+test("removing one diary revision invalidates only the cognition that cites it", (t) => {
+  const { runtime, store } = fixture(t),
+    memory = store.bind(role);
+  const diary = memory.diaryWrite({ title: "日记", body: secret }, "ai-diary", {
+    conversation: scope,
+  });
+  commit(runtime, role, add("one", [diary.id], secret));
+  memory.diaryRevise({
+    id: diary.id,
+    expectedRevision: 1,
+    title: "日记",
+    body: safe,
+  });
+  commit(runtime, role, add("two", [diary.id], safe));
+  store.db
+    .prepare("DELETE FROM diary_revisions WHERE id=? AND revision=1")
+    .run(diary.id);
+  assert.deepEqual(
+    store.db
+      .prepare("SELECT subject_key FROM cognitions WHERE status='active'")
+      .all()
+      .map((row) => row.subject_key),
+    ["two"],
+  );
+  assert.doesNotMatch(
+    JSON.stringify(memory.export().tables.cognition_revisions),
+    new RegExp(secret),
+  );
+});
+
+test("deleting earlier revisions out of order preserves children of the next surviving revision", (t) => {
+  const { runtime, store } = fixture(t),
+    memory = store.bind(role);
+  const diary = memory.diaryWrite(
+    { title: "日记", body: "第一版" },
+    "ai-diary",
+    { conversation: scope },
+  );
+  for (const revision of [1, 2])
+    memory.diaryRevise({
+      id: diary.id,
+      expectedRevision: revision,
+      title: "日记",
+      body: "修订" + (revision + 1),
+    });
+  const child = memory.diaryWrite(
+    { title: "引用第三版", body: safe, evidence: [diary.id] },
+    "ai-diary",
+    { conversation: scope },
+  );
+  commit(runtime, role, add("third", [child.id], safe));
+  const erase = store.db.prepare(
+    "DELETE FROM diary_revisions WHERE id=? AND revision=?",
+  );
+  erase.run(diary.id, 2);
+  erase.run(diary.id, 1);
+  const row = store.db
+    .prepare("SELECT status,content,version FROM cognitions")
+    .get();
+  assert.deepEqual({ ...row }, { status: "active", content: safe, version: 1 });
 });

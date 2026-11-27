@@ -155,10 +155,13 @@ function awakeningMaterial(runtime, ctx) {
       !records.every(
         (record) =>
           record &&
-          visibleCognitionEvidence(db, record, (id) => {
-            const source = read(id);
+          visibleCognitionEvidence(db, record, (id, revision) => {
+            const source = read(id, revision);
             if (source) {
-              fingerprints.set(id, source.fingerprint);
+              fingerprints.set(
+                id,
+                (fingerprints.get(id) ?? "") + source.fingerprint,
+              );
               fromPrivate ||= source.sourceScopes.some((scope) =>
                 scope.startsWith("private:"),
               );
@@ -168,7 +171,8 @@ function awakeningMaterial(runtime, ctx) {
       )
     )
       continue;
-    for (const [id, fingerprint] of fingerprints) evidence.set(id, fingerprint);
+    for (const [id, fingerprint] of fingerprints)
+      evidence.set(id, (evidence.get(id) ?? "") + fingerprint);
     summaries.push({
       scopeId: row.scope_id,
       summary: row.summary,

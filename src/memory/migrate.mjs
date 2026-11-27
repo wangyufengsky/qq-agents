@@ -304,6 +304,15 @@ export function restoreExport(memory, data) {
               value[key] = remapBoundary(value[key]);
           row.value = JSON.stringify(value);
         }
+        if (table === "cognition_evidence") {
+          row.source_revision ??= 0;
+          if (
+            !Number.isSafeInteger(row.source_revision) ||
+            row.source_revision < 0 ||
+            (row.source_type !== "diary" && row.source_revision !== 0)
+          )
+            throw Error("EXPORT_INTEGRITY_FAILED");
+        }
         if (table === "dream_checkpoints") {
           if (row.source_partition === "events") {
             row.last_event_seq = remapBoundary(row.last_event_seq);
@@ -348,7 +357,7 @@ export function restoreExport(memory, data) {
           seqs.set(row.seq, Number(result.lastInsertRowid));
       }
     }
-    reconcileDreamPurges(memory.db, memory.agentId);
+    reconcileDreamPurges(memory);
     if (
       memory.db
         .prepare(

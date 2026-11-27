@@ -184,17 +184,24 @@ export function listCognitions(
   );
 }
 
-/** @param {Database} db @param {Cognition} row @param {(id:string) => Source|null|undefined} read */
+/** @param {Database} db @param {Cognition} row @param {(id:string,revision?:number) => Source|null|undefined} read */
 export function visibleCognitionEvidence(db, row, read) {
-  const evidence = /** @type {string[]} */ (
-    prepared(
-      db,
-      "SELECT source_id FROM cognition_evidence WHERE agent_id=? AND cognition_id=? AND cognition_version=?",
-    )
-      .all(row.agent_id, row.id, row.version)
-      .map((/** @type {{source_id:string}} */ { source_id }) => source_id)
+  const evidence = storedEvidence(db, row);
+  if (!evidence.length) return null;
+  const scopes = new Set(
+    /** @type {string[]} */ (JSON.parse(row.source_scopes_json)),
   );
-  return evidence.length && evidence.every((id) => read(id)) ? evidence : null;
+  for (const ref of evidence) {
+    if (ref.source_type === "diary" && !ref.source_revision) return null;
+    const source = read(ref.source_id, ref.source_revision || undefined);
+    if (!source) return null;
+    for (const scope of source.sourceScopes) scopes.add(scope);
+  }
+  // Upgrade the in-memory projection too: historical rows can predate transitive scope tracking.
+  row.source_scopes_json = JSON.stringify([...scopes].sort());
+  if ([...scopes].some((scope) => scope.startsWith("private:")))
+    row.from_private = 1;
+  return evidence.map((ref) => ref.source_id);
 }
 
 /** @param {Scope["runtime"]} runtime @param {Snapshot} snapshot @param {unknown} input @param {{privateRead:Set<string>, fingerprints:Map<string,string>, maxOps:number}} access */
@@ -361,9 +368,13 @@ export function planDreamPatch(runtime, snapshot, input, access) {
     if (["REINFORCE", "WEAKEN", "MERGE"].includes(op.op))
       for (const item of predecessors)
         for (const source of storedEvidence(db, item))
-          evidence.set(source.source_id, source);
+          evidence.set(
+            JSON.stringify([source.source_id, source.source_revision]),
+            source,
+          );
     for (const source of sources)
-      evidence.set(source.id, {
+      evidence.set(JSON.stringify([source.id, source.revision ?? 0]), {
+        source_revision: source.revision ?? 0,
         source_id: source.id,
         source_type: source.type,
         scope_id: source.scopeId,
@@ -431,13 +442,13 @@ function archived(row, time, mergedInto = null) {
   };
 }
 
-/** @typedef {{source_id:string,source_type:string,scope_id:string,relation:string}} Evidence */
+/** @typedef {{source_id:string,source_type:string,scope_id:string,relation:string,source_revision:number}} Evidence */
 /** @param {Database} db @param {Cognition} row */
 function storedEvidence(db, row) {
   return /** @type {Evidence[]} */ (
     prepared(
       db,
-      "SELECT source_id,source_type,scope_id,relation FROM cognition_evidence WHERE agent_id=? AND cognition_id=? AND cognition_version=? ORDER BY source_id",
+      "SELECT source_id,source_type,scope_id,relation,source_revision FROM cognition_evidence WHERE agent_id=? AND cognition_id=? AND cognition_version=? ORDER BY source_id",
     ).all(row.agent_id, row.id, row.version)
   );
 }
@@ -508,12 +519,19 @@ function writeCognition(
     before ? JSON.stringify(before) : null,
     JSON.stringify(after),
     runId,
-    runId ? "dream-cognitive" : "admin",
+    runId
+      ? "dream-cognitive"
+      : op === "ROLLBACK"
+        ? "admin"
+        : "system-provenance",
     reason,
     time,
   );
   for (const source of evidence)
-    prepared(db, "INSERT INTO cognition_evidence VALUES(?,?,?,?,?,?,?,?)").run(
+    prepared(
+      db,
+      "INSERT INTO cognition_evidence VALUES(?,?,?,?,?,?,?,?,?)",
+    ).run(
       agentId,
       id,
       version,
@@ -522,6 +540,7 @@ function writeCognition(
       source.scope_id,
       source.relation,
       time,
+      source.source_revision,
     );
 }
 
@@ -590,6 +609,82 @@ export function recoverDreamRuns(db, now) {
     db,
     "UPDATE dream_runs SET status='FAILED',error_code='DREAM_INTERRUPTED',finished_at=? WHERE status IN ('QUEUED','RUNNING','VALIDATING')",
   ).run(new Date(now).toISOString());
+}
+
+/** @param {Database} db @param {string} agentId @param {string} correctionId */
+export function disputeSupersededCorrection(db, agentId, correctionId) {
+  const rows = /** @type {Cognition[]} */ (
+    prepared(
+      db,
+      `SELECT c.* FROM cognitions c JOIN cognition_evidence e ON
+    c.id=e.cognition_id AND c.agent_id=e.agent_id AND c.version=e.cognition_version
+    WHERE c.agent_id=? AND c.status='active' AND e.source_type='correction' AND e.source_id=?`,
+    ).all(agentId, correctionId)
+  );
+  for (const before of rows)
+    reviseSourceState(db, before, "CORRECTION_SUPERSEDED");
+}
+
+/** @param {Database} db @param {Cognition} before @param {string} op @param {Cognition} [projection] */
+function reviseSourceState(db, before, op, projection) {
+  const time = new Date().toISOString();
+  const after = {
+    ...(projection ?? {
+      ...before,
+      content: "",
+      status: "disputed",
+      epistemic_status: "disputed",
+    }),
+    version: before.version + 1,
+    updated_at: time,
+  };
+  writeCognition(
+    db,
+    { op, before, after, reason: op, evidence: storedEvidence(db, before) },
+    time,
+    null,
+  );
+  prepared(
+    db,
+    "UPDATE dream_checkpoints SET cognition_version=cognition_version+1,updated_at=? WHERE agent_id=?",
+  ).run(time, before.agent_id);
+  prepared(
+    db,
+    `DELETE FROM awakening_contexts WHERE agent_id=? AND EXISTS (
+    SELECT 1 FROM json_each(source_refs_json) WHERE json_extract(value,'$.id')=?)`,
+  ).run(before.agent_id, before.id);
+}
+
+/** @param {any} memory */
+export function reconcileCognitionProvenance(memory) {
+  const { db, agentId } = memory;
+  const rows = /** @type {Cognition[]} */ (
+    prepared(
+      db,
+      "SELECT * FROM cognitions WHERE agent_id=? AND status='active'",
+    ).all(agentId)
+  );
+  const { read } = dreamSources(
+    { memory: memory.store },
+    { agentId, conversation: "@dream" },
+    allSources,
+  );
+  for (const before of rows) {
+    const refs = storedEvidence(db, before);
+    if (
+      refs.some((ref) => ref.source_type === "diary" && !ref.source_revision)
+    ) {
+      reviseSourceState(db, before, "EVIDENCE_REVISION_UNKNOWN");
+      continue;
+    }
+    const projection = { ...before };
+    if (
+      visibleCognitionEvidence(db, projection, read) &&
+      (projection.from_private !== before.from_private ||
+        projection.source_scopes_json !== before.source_scopes_json)
+    )
+      reviseSourceState(db, before, "SOURCE_SCOPES_UPDATED", projection);
+  }
 }
 
 const allSources = {

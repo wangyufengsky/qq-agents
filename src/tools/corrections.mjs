@@ -13,7 +13,7 @@ const reviewTarget = z
   .strict();
 export const correctionDefinitions = {
   memory_correct: [
-    "保存明确纠正：personId 是被纠正认识涉及的人，sourceId 必须是本轮完整读到的当事人或管理员原始消息。targets 指旧判断所在记录的 type/id；人物卡用 person，日记 diary，相处记录 item，笔记 note，意图 intent，聊天 event。oldBelief 写具体错误判断，current 写新解释，scope 写适用事件/时间，不能扩大为永久结论。后来的解释替代已有纠正时填写 supersedes=旧纠正ID。自动标注旧记录并返回关联检查清单，按原工具更新后用 memory_correction_review 核实；不要只道歉。",
+    "保存明确纠正：personId 是被纠正认识涉及的人，sourceId 必须是本轮完整读到的当事人或管理员原始消息。targets 指旧判断所在记录的 type/id；人物卡用 person，日记 diary，相处记录 item，笔记 note，意图 intent，聊天 event。oldBelief 写具体错误判断，current 写新解释，scope 写适用事件/时间，不能扩大为永久结论。后来的解释替代已有纠正时填写 supersedes=旧纠正ID。引用该旧纠正的有效梦境认知随之转为有争议，已读会话会收到失效提示。自动标注旧记录并返回关联检查清单，按原工具更新后用 memory_correction_review 核实；不要只道歉。",
     z
       .object({
         personId: z.string().regex(/^\d{5,12}$/),
@@ -53,6 +53,16 @@ export const correctionDefinitions = {
     ]),
   ],
 };
+// Storage-only provenance can contain cross-conversation IDs and scope names.
+function presentedCorrection(value) {
+  if (!value.targets) return value;
+  return {
+    ...value,
+    targets: value.targets.map(
+      ({ provenance: _provenance, ...target }) => target,
+    ),
+  };
+}
 export function correctionTool(runtime, ctx, name, args) {
   const memory = runtime.memory.bind(ctx.agentId),
     corrections = memory.corrections;
@@ -66,16 +76,20 @@ export function correctionTool(runtime, ctx, name, args) {
     )
       throw Error("CORRECTION_SOURCE_REQUIRED");
     boundary.assert({ id: source.id });
-    return corrections.create(args, source, boundary, runtime.now());
+    return presentedCorrection(
+      corrections.create(args, source, boundary, runtime.now()),
+    );
   }
   if (name === "memory_correction_review") {
     if (args.reason !== undefined) runtime.assertSafeOutput(ctx, args.reason);
-    return corrections.review(args, boundary, runtime.now());
+    return presentedCorrection(
+      corrections.review(args, boundary, runtime.now()),
+    );
   }
-  if (args.id) return corrections.get(args.id);
+  if (args.id) return presentedCorrection(corrections.get(args.id));
   const rows = corrections.list();
   return {
-    items: rows.slice(args.offset, args.offset + 5),
+    items: rows.slice(args.offset, args.offset + 5).map(presentedCorrection),
     total: rows.length,
     nextOffset: args.offset + 5 < rows.length ? args.offset + 5 : null,
   };

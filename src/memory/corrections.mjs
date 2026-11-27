@@ -1,3 +1,5 @@
+import { disputeSupersededCorrection } from "../dream/store.mjs";
+import { correctionProvenance } from "../dream/provenance.mjs";
 import { randomUUID, createHash } from "node:crypto";
 
 const digest = (value) =>
@@ -28,10 +30,48 @@ export class Corrections {
     return JSON.parse(row.value);
   }
   put(value) {
-    this.memory.db
-      .prepare("INSERT OR REPLACE INTO memory_corrections VALUES(?,?,?)")
-      .run(this.memory.agentId, value.id, JSON.stringify(value));
-    return value;
+    const { db, agentId, store } = this.memory;
+    const write = () => {
+      db.prepare(
+        "INSERT OR REPLACE INTO memory_corrections(agent_id,id,value) VALUES(?,?,?)",
+      ).run(agentId, value.id, JSON.stringify(value));
+      if (value.supersededBy)
+        disputeSupersededCorrection(db, agentId, value.id);
+      return value;
+    };
+    return db.isTransaction ? write() : store.transaction(write);
+  }
+  reconcileDreamTargets() {
+    const { db, agentId } = this.memory;
+    for (const value of this.list()) {
+      let changed = false;
+      for (const target of value.targets ?? []) {
+        if (["event", "diary"].includes(target.type) || target.provenance)
+          continue;
+        let record;
+        try {
+          record = this.record(target.type, target.id);
+        } catch (error) {
+          if (error.message !== "RECORD_NOT_FOUND") throw error;
+        }
+        // An edited target no longer establishes which evidence the old correction described.
+        target.provenance =
+          record && digest(record) === target.fingerprint
+            ? correctionProvenance(this.memory, record)
+            : { unresolved: true, refs: [], scopes: [] };
+        changed = true;
+      }
+      if (changed)
+        db.prepare(
+          "UPDATE memory_corrections SET value=? WHERE agent_id=? AND id=?",
+        ).run(JSON.stringify(value), agentId, value.id);
+      if (value.targets?.some((target) => target.provenance?.unresolved))
+        db.prepare(
+          "INSERT INTO dream_privacy_purge VALUES(?,?,'correction',NULL)",
+        ).run(agentId, value.id);
+      if (value.supersededBy)
+        disputeSupersededCorrection(db, agentId, value.id);
+    }
   }
   record(type, id) {
     const m = this.memory;
@@ -230,6 +270,9 @@ export class Corrections {
           direct: !!r.direct,
           revision: r.revision || 0,
           fingerprint: digest(this.record(r.type, r.id)),
+          ...(!["event", "diary"].includes(r.type) && {
+            provenance: correctionProvenance(this.memory, r),
+          }),
           state: r.type === "event" ? "annotated" : "pending",
         })),
       });

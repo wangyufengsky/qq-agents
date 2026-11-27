@@ -1,11 +1,12 @@
 // @ts-check
+
 import { createHash } from "node:crypto";
 import { prepared, recallBoundary } from "../core/recall-boundary.mjs";
 
 /** @typedef {keyof typeof SOURCES} Partition */
 /** @typedef {Record<Partition, number>} Watermarks */
-/** @typedef {{id:string, seq:number, conversation:string, kind:string, direction:string, status:string, body:string, title:string, sender_id:string|null, occurred_at:string, updated_at:string, written_at:string, payload:string, metadata:string, value:string}} SourceRow */
-/** @typedef {{id:string, type:"event"|"diary"|"correction", scopeId:string, sourceScopes:string[], seq:number, text:string, time:string, observed:boolean, fingerprint:string, direction?:string, kind?:string, senderId?:string|null}} DreamSource */
+/** @typedef {{id:string, seq:number, revision:number, conversation:string, kind:string, direction:string, status:string, body:string, title:string, sender_id:string|null, occurred_at:string, updated_at:string, written_at:string, payload:string, metadata:string, value:string}} SourceRow */
+/** @typedef {{id:string, type:"event"|"diary"|"correction", scopeId:string, sourceScopes:string[], seq:number, text:string, time:string, observed:boolean, fingerprint:string, revision?:number, direction?:string, kind?:string, senderId?:string|null}} DreamSource */
 
 export const SOURCES = Object.freeze({
   events: {
@@ -118,8 +119,11 @@ export function dreamSources(runtime, ctx, limits) {
         ),
       ])
         scopes.add(sourceScope(source));
-      if (typeof payload.sourceEventId === "string") {
-        const parent = get("events", payload.sourceEventId);
+      for (const { parent_id } of prepared(
+        db,
+        "SELECT DISTINCT parent_id FROM dream_event_parents WHERE agent_id=? AND id=?",
+      ).all(ctx.agentId, id)) {
+        const parent = get("events", String(parent_id));
         const source =
           parent &&
           parent.seq < row.seq &&
@@ -140,6 +144,7 @@ export function dreamSources(runtime, ctx, limits) {
         senderId: row.sender_id,
       };
     } else if (partition === "diaries") {
+      eventFields = { revision: row.revision };
       const metadata = JSON.parse(row.metadata);
       const conversation =
         typeof metadata.writtenIn === "string"
@@ -216,6 +221,28 @@ export function dreamSources(runtime, ctx, limits) {
             targetRow && project(targetPartition, targetRow, seen, true);
           if (!targetSource) return null;
           for (const scope of targetSource.sourceScopes) scopes.add(scope);
+        } else {
+          const provenance = target.provenance;
+          if (!provenance || provenance.unresolved) return null;
+          for (const scope of provenance.scopes) scopes.add(sourceScope(scope));
+          for (const ref of provenance.refs) {
+            if (ref.id.startsWith("context:")) {
+              scopes.add(sourceScope(ref.id.slice(8)));
+              continue;
+            }
+            const event = get("events", ref.id);
+            const diary = event
+              ? undefined
+              : ref.revision
+                ? diaryRevision(ref.id, ref.revision)
+                : get("diaries", ref.id);
+            const ancestors = new Set([...seen, id]);
+            const parent = event
+              ? project("events", event, ancestors, true)
+              : diary && project("diaries", diary, ancestors, true);
+            if (!parent) return null;
+            for (const scope of parent.sourceScopes) scopes.add(scope);
+          }
         }
       }
       for (const scope of supporting.sourceScopes) scopes.add(scope);
@@ -223,7 +250,7 @@ export function dreamSources(runtime, ctx, limits) {
       text = `旧认识：${value.oldBelief}\n更正：${value.current}`;
       time = value.createdAt;
     }
-    if (!text.trim()) return null;
+    if (!text.trim() && !provenanceOnly) return null;
     scopes.add(scopeId);
     const sourceScopes = [...scopes]
       .filter((scope) => scope !== "global")
@@ -245,8 +272,12 @@ export function dreamSources(runtime, ctx, limits) {
   }
 
   return {
-    /** @param {string} id */
-    read(id) {
+    /** @param {string} id @param {number} [revision] */
+    read(id, revision) {
+      if (revision !== undefined) {
+        const row = diaryRevision(id, revision);
+        return row && project("diaries", row);
+      }
       for (const partition of SOURCE_PARTITIONS) {
         const row = get(partition, id);
         if (row) return project(partition, row);
@@ -300,6 +331,7 @@ export function visibleSource(source, maxChars = 1600) {
   const {
     id,
     type,
+    revision,
     scopeId,
     sourceScopes,
     text,
@@ -311,6 +343,7 @@ export function visibleSource(source, maxChars = 1600) {
   return {
     id,
     type,
+    revision,
     scopeId,
     sourceScopes,
     time,

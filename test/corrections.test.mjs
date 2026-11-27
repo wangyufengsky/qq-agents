@@ -87,6 +87,7 @@ test("a correction traverses dependencies, preserves originals and accompanies e
     3,
   );
   const c = await f.call("memory_correct", f.args);
+  assert.ok(c.targets.every((target) => !Object.hasOwn(target, "provenance")));
   assert.equal(c.targets.length, 5);
   assert.equal(f.m.readRecord({ id: f.old.id }).body, "你在疏远我");
   for (const row of [
@@ -332,6 +333,7 @@ test("shared evidence does not block correction and inherited candidates stay re
     background: "想问为什么不理我",
   });
   const c = await f.call("memory_correct", f.args);
+  assert.ok(c.targets.every((target) => !Object.hasOwn(target, "provenance")));
   assert.ok(
     f.runtime.contexts.handoff("agent-0", "group:20000").intents[0].corrections,
   );

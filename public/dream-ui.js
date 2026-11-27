@@ -177,7 +177,7 @@ async function renderDreams() {
         .map((version) => {
           const snapshot = JSON.parse(version.after_json);
           return `<div class="record"><strong>v${version.version} · ${esc(version.op)}</strong><p>${esc(snapshot.content)}</p><p class="hint">${esc(version.reason)} · ${esc(version.created_at)}</p>
-          ${data.evidence.map((source, index) => (source.cognition_version === version.version ? `<button type="button" class="ghost" data-dream-source="${index}">${esc(source.source_type)} · ${esc(source.scope_id)}</button>` : "")).join("")}
+          ${data.evidence.map((source, index) => (source.cognition_version === version.version ? `<button type="button" class="ghost" data-dream-source="${index}" ${source.source_type === "diary" && !source.source_revision ? "disabled" : ""}>${esc(source.source_type)}${source.source_type === "diary" ? (source.source_revision ? " v" + esc(source.source_revision) : "（历史版本未知）") : ""} · ${esc(source.scope_id)}</button>` : "")).join("")}
           ${version.version !== data.cognition.version ? `<button type="button" data-dream-rollback="${version.version}">回滚到此版本</button>` : ""}</div>`;
         })
         .join("")}
@@ -188,7 +188,13 @@ async function renderDreams() {
           const source = data.evidence[Number(button.dataset.dreamSource)];
           const query = new URLSearchParams({ agentId, id: source.source_id });
           if (source.source_type !== "correction")
-            return readMemory(source.source_id, { agentId });
+            return readMemory(source.source_id, {
+              agentId,
+              revision:
+                source.source_type === "diary"
+                  ? source.source_revision
+                  : undefined,
+            });
           const entry = await api("/api/dreams/correction?" + query);
           if (active() && target.contains(button)) {
             const evidence = $("#dream-evidence");
@@ -259,8 +265,9 @@ async function renderDreams() {
     showTriggerStatus(run.mode, run.status, run.error_code);
     if (dreamPendingStatuses.has(run.status)) {
       setTimeout(() => action(() => refreshRun(runId)), 2000);
-    } else if (run.mode === "imaginative" && run.status === "COMMITTED") {
-      await stories();
+    } else if (run.status === "COMMITTED") {
+      if (run.mode === "imaginative") await stories();
+      else await list(currentOffset);
     }
   }
   async function runs() {

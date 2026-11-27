@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import { spawn } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -394,6 +394,11 @@ for (const type of ["codex", "openai", "antigravity", "dsh"]) {
           assert.equal(row.backend_id, backend.id);
           assert.equal(row.model, backend.model);
           assert.equal(record.state("@dream").session, undefined);
+          if (type === "openai")
+            assert.deepEqual(
+              readdirSync(path.join(f.root, "openai", agentId, "sessions")),
+              [],
+            );
           const evidence = JSON.parse(readFileSync(plan.evidence, "utf8"));
           assert.equal(sessions.has(evidence.session), false);
           sessions.add(evidence.session);

@@ -65,7 +65,7 @@ const append = (memory, dedupe, other = {}) =>
     ...other,
   });
 
-test("schema 8 opens as schema 9 and all eight tables are role-exportable", (t) => {
+test("schema 8 opens as schema 10 and all eight tables are role-exportable", (t) => {
   const file = path.join(temp(t), "memory.sqlite");
   const old = new MemoryStore(file);
   const source = append(old.bind(role), "history");
@@ -78,7 +78,7 @@ test("schema 8 opens as schema 9 and all eight tables are role-exportable", (t) 
   t.after(() => upgraded.close());
   assert.equal(
     upgraded.db.prepare("PRAGMA user_version").get().user_version,
-    9,
+    10,
   );
   assert.equal(
     upgraded.db.prepare("SELECT id FROM events").get().id,
@@ -503,5 +503,92 @@ test("a merge or reinforcement cannot carry forward evidence whose protection ch
   assert.equal(
     db.prepare("SELECT count(*) AS n FROM cognitions WHERE version=1").get().n,
     2,
+  );
+});
+
+test("deleting the last consumed diary and correction does not reuse their cursors", (t) => {
+  const { runtime, store } = fixture(t);
+  const memory = store.bind(role);
+  const event = append(memory, "source");
+  const correction = (id) =>
+    memory.corrections.put({
+      id,
+      sourceId: event.id,
+      oldBelief: "先前",
+      current: "现在",
+      createdAt: new Date().toISOString(),
+    });
+  const old = memory.diaryWrite({ title: "第一篇", body: "已消费" });
+  correction("old");
+  const { snapshot } = startDream(runtime, role, options);
+  commitDream(runtime, snapshot, noChanges, access(snapshot));
+  store.db.prepare("DELETE FROM diaries WHERE id=?").run(old.id);
+  store.db.prepare("DELETE FROM memory_corrections WHERE id=?").run("old");
+  const next = memory.diaryWrite({ title: "第二篇", body: "新日记" });
+  correction("next");
+  const batch = startDream(runtime, role, options).snapshot;
+  assert.deepEqual(
+    new Set(batch.items.map((item) => item.id)),
+    new Set([next.id, "next"]),
+  );
+});
+
+test("schema 9 source tables preserve evidence and resume above a deleted high watermark", (t) => {
+  const file = path.join(temp(t), "legacy.sqlite");
+  const current = new MemoryStore(file),
+    memory = current.bind(role);
+  const entry = memory.diaryWrite({ title: "旧日记", body: "第一版" });
+  for (const { name } of current.db
+    .prepare(
+      "SELECT name FROM sqlite_schema WHERE type='trigger' AND name LIKE 'dream_privacy_%'",
+    )
+    .all())
+    current.db.exec("DROP TRIGGER " + name);
+  current.db
+    .exec(`DROP VIEW dream_privacy_purge; DROP VIEW dream_source_dependencies; DROP VIEW dream_event_parents;
+    ALTER TABLE diary_revisions RENAME TO modern_diary;
+    CREATE TABLE diary_revisions(id TEXT NOT NULL,revision INTEGER NOT NULL,title TEXT NOT NULL,body TEXT NOT NULL,metadata TEXT NOT NULL,written_at TEXT NOT NULL,PRIMARY KEY(id,revision),FOREIGN KEY(id) REFERENCES diaries(id));
+    INSERT INTO diary_revisions SELECT id,revision,title,body,metadata,written_at FROM modern_diary; DROP TABLE modern_diary;
+    DROP TABLE memory_corrections;
+    CREATE TABLE memory_corrections(agent_id TEXT NOT NULL,id TEXT NOT NULL,value TEXT NOT NULL,PRIMARY KEY(agent_id,id));
+    DROP TABLE cognition_evidence;
+    CREATE TABLE cognition_evidence(agent_id TEXT NOT NULL,cognition_id TEXT NOT NULL,cognition_version INTEGER NOT NULL,source_id TEXT NOT NULL,source_type TEXT NOT NULL,scope_id TEXT NOT NULL,relation TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(agent_id,cognition_id,cognition_version,source_id));
+    PRAGMA user_version=9;`);
+  current.db
+    .prepare("INSERT INTO cognition_evidence VALUES(?,?,?,?,?,?,?,?)")
+    .run(
+      role,
+      "history",
+      1,
+      entry.id,
+      "diary",
+      group,
+      "supports",
+      "2026-01-01",
+    );
+  for (const partition of ["diaries", "corrections"])
+    current.db
+      .prepare("INSERT INTO dream_checkpoints VALUES(?,?,90,NULL,1,?)")
+      .run(role, partition, "2026-01-01");
+  current.close();
+  const upgraded = new MemoryStore(file);
+  t.after(() => upgraded.close());
+  const restored = upgraded.bind(role);
+  assert.equal(
+    upgraded.db.prepare("SELECT source_revision FROM cognition_evidence").get()
+      .source_revision,
+    1,
+  );
+  const diary = restored.diaryWrite({ title: "新日记", body: "新的序号" });
+  restored.corrections.put({ id: "new" });
+  assert.ok(
+    upgraded.db
+      .prepare("SELECT seq FROM diary_revisions WHERE id=?")
+      .get(diary.id).seq > 90,
+  );
+  assert.ok(
+    upgraded.db
+      .prepare("SELECT seq FROM memory_corrections WHERE id='new'")
+      .get().seq > 90,
   );
 });
