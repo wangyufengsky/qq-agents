@@ -72,6 +72,9 @@ export function initializeGardenTables(db) {
       delta INTEGER NOT NULL,
       balance INTEGER NOT NULL CHECK (balance >= 0)
     );
+    CREATE TABLE IF NOT EXISTS garden_story_presets (
+      id INTEGER PRIMARY KEY CHECK (id=1)
+    );
     CREATE TABLE IF NOT EXISTS garden_harvests (
       id TEXT PRIMARY KEY,
       crop_id TEXT NOT NULL,
@@ -111,6 +114,18 @@ export function initializeGardenTables(db) {
       night INTEGER NOT NULL,
       discovered INTEGER NOT NULL CHECK (discovered IN (0,1))
     );
+    CREATE TABLE IF NOT EXISTS garden_event_followups (
+      id TEXT PRIMARY KEY,
+      source_event_id TEXT NOT NULL,
+      trigger_day INTEGER NOT NULL,
+      kind TEXT NOT NULL,
+      actor_kind TEXT,
+      actor_id TEXT,
+      payload TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','settled','cancelled')),
+      settled_at INTEGER
+    );
+    CREATE INDEX IF NOT EXISTS garden_followups_day ON garden_event_followups(trigger_day,status);
     CREATE TABLE IF NOT EXISTS garden_events (
       day INTEGER PRIMARY KEY,
       value TEXT

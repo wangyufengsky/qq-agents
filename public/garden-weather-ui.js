@@ -284,6 +284,23 @@ const gardenEventKinds = {
   merchant: "流浪商人",
   thief: "小偷",
   visitor: "幸运访客",
+  choice: "花园抉择",
+  story: "花园小景",
+};
+const gardenEventCapacity = 48;
+const gardenStoryKinds = {
+  choice: {
+    rain_cat: "雨夜借棚",
+    hedgehog: "刺猬讨草莓",
+    sketch: "植物速写",
+    trader: "交换种子",
+    tea: "园中下午茶",
+  },
+  story: {
+    migratory_bird: "候鸟借宿",
+    fence_note: "匿名花评",
+    full_moon: "满月露台",
+  },
 };
 const gardenRewardKinds = {
   seed: "种子",
@@ -360,7 +377,7 @@ function gardenGiftSettings(giftOffers, catalog) {
   const byId = new Map(
     (giftOffers ?? []).map((offer) => [offer.giftId, offer]),
   );
-  const ids = new Set([...byId.keys(), ...Object.keys(catalog)]);
+  const ids = Object.keys(catalog).filter((id) => !catalog[id].eventOnly);
   return `${gardenWeatherSelect("giftMode", "礼物货单", { random: "每日随机", fixed: "固定货单" }, fixed ? "fixed" : "random")}
     <p class="hint" data-random-gifts${fixed ? " hidden" : ""}>每天从礼物池抽出 3–5 款，每款起始库存 2 或 3 件。</p>
     <fieldset data-fixed-gifts${fixed ? "" : " hidden disabled"}>
@@ -387,6 +404,11 @@ function multiSelect(name, label, options, selected, required = true) {
     .join("")}</select></label>`;
 }
 function gardenEventEffect(kind, effect, crops, weatherIds, catalog) {
+  if (gardenStoryKinds[kind])
+    return `<div data-story-effect="${esc(JSON.stringify(effect))}">
+      ${gardenWeatherSelect("eventStory", "故事玩法", gardenStoryKinds[kind], effect.story)}
+      ${effect.options?.length ? `<ul>${effect.options.map(({ label, description }) => `<li><strong>${esc(label)}</strong> · ${esc(description)}</li>`).join("")}</ul>` : ""}
+    </div>`;
   const variants = gardenEventVariants[kind],
     variant = effect.effect ?? Object.keys(variants ?? {})[0] ?? kind;
   if (gardenMechanicFields[variant]) {
@@ -487,7 +509,7 @@ function gardenEventSettingsMarkup(
     ${gardenWeatherSelect("eventParent", "复制事件", options, "")}
     </div>
     <button type="button" class="ghost" data-add-event-entry>新增事件</button>
-    <details><summary>补入新版预设</summary><p class="hint">选择缺少的条目后加入下方表单，保存设置后从下一花园日起生效。每池最多 40 条。</p>
+    <details><summary>补入新版预设</summary><p class="hint">选择缺少的条目后加入下方表单，保存设置后从下一花园日起生效。每池最多 ${gardenEventCapacity} 条。</p>
     ${presets
       .map(({ id, entry, available }) => {
         const exists = Object.hasOwn(pool.entries, id);
@@ -507,7 +529,11 @@ function gardenReadEvents(form) {
       const read = (key) => row.querySelector(`[name="${key}"]`);
       const kind = read("eventKind").value;
       let effect;
-      if (kind === "visitor") {
+      if (gardenStoryKinds[kind]) {
+        effect = JSON.parse(
+          row.querySelector("[data-story-effect]").dataset.storyEffect,
+        );
+      } else if (kind === "visitor") {
         const rewardKind = read("rewardKind").value;
         effect = {
           kind,
@@ -632,8 +658,8 @@ function gardenEventEdit(event, show, catalog) {
     const selected = Array.from(
       form.querySelectorAll("[data-event-preset]:checked:not(:disabled)"),
     ).filter((e) => !ids.has(e.dataset.eventPreset));
-    if (ids.size + selected.length > 40) {
-      show("超过 40 条上限，请减少选中的预设。");
+    if (ids.size + selected.length > gardenEventCapacity) {
+      show(`超过 ${gardenEventCapacity} 条上限，请减少选中的预设。`);
       return true;
     }
     for (const input of selected) {
@@ -667,15 +693,26 @@ function gardenEventEdit(event, show, catalog) {
         weather,
         catalog,
       );
-    else if (node.name === "eventKind")
+    else if (node.name === "eventKind" || node.name === "eventStory") {
+      const kind = row.querySelector('[name="eventKind"]').value;
+      const story =
+        node.name === "eventStory"
+          ? node.value
+          : Object.keys(gardenStoryKinds[kind] ?? {})[0];
+      const preset =
+        story &&
+        Array.from(
+          form.querySelectorAll("[data-event-preset]"),
+          (input) => JSON.parse(input.dataset.template).effect,
+        ).find((effect) => effect.kind === kind && effect.story === story);
       row.querySelector("[data-event-effect]").innerHTML = gardenEventEffect(
-        node.value,
-        defaults[node.value] ?? {},
+        kind,
+        preset || defaults[kind] || {},
         crops,
         weather,
         catalog,
       );
-    else if (node.name === "rewardKind")
+    } else if (node.name === "rewardKind")
       row.querySelector("[data-event-effect]").innerHTML = gardenEventEffect(
         "visitor",
         { reward: { kind: node.value, quantity: 1, cropId: first } },
@@ -707,9 +744,9 @@ function gardenEventEdit(event, show, catalog) {
   if (
     !/^[a-z][a-z0-9-]{0,39}$/.test(id) ||
     Object.hasOwn(existing, id) ||
-    Object.keys(existing).length >= 40
+    Object.keys(existing).length >= gardenEventCapacity
   ) {
-    show("请填写未占用的小写事件 ID，每池最多 40 个条目。");
+    show(`请填写未占用的小写事件 ID，每池最多 ${gardenEventCapacity} 个条目。`);
     return true;
   }
   if (!form.reportValidity()) return true;
@@ -773,6 +810,8 @@ async function gardenRunEventTrial(form) {
     disabled: "已停用",
     no_seeds: "没有可交易库存",
     weather_unavailable: "实况天气不可用",
+    story_unavailable: "当前花园条件无法触发",
+    full_moon: "满月事件优先",
     zero_weight: "权重为零",
     conditions: "条件未满足",
   };

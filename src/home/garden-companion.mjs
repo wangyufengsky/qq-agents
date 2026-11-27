@@ -79,7 +79,7 @@ export function gardenRumors(db) {
 }
 
 /** @param {import("node:sqlite").DatabaseSync} db @param {import("./garden-journal.mjs").GardenJournal} journal
- * @param {"initial"|"calendar"|"merchant"|"visitor"} source @param {number} day @param {number} now */
+ * @param {"initial"|"calendar"|"merchant"|"visitor"|"trader"} source @param {number} day @param {number} now */
 export function unlockGardenRumor(db, journal, source, day, now) {
   const heard = gardenRumors(db);
   const remaining = Object.entries(rumors).filter(
@@ -113,6 +113,7 @@ export function unlockGardenRumor(db, journal, source, day, now) {
     detail: { stage: text, rumorId: id },
     key: id,
   });
+  return true;
 }
 
 /** @param {import("node:sqlite").DatabaseSync} db @param {import("./garden-journal.mjs").GardenJournal} journal

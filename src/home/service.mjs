@@ -10,6 +10,7 @@ import { HomeSocialService } from "./social-service.mjs";
 import { HomeRooms } from "./rooms.mjs";
 import { randomUUID, createHash } from "node:crypto";
 import { StoryCircle } from "./story-circle.mjs";
+import { recordGardenObservation } from "./garden-console.mjs";
 import { GardenService } from "./garden-service.mjs";
 import { GardenDelegations } from "./garden-delegations.mjs";
 import { HomeStore } from "./store.mjs";
@@ -20,6 +21,11 @@ export class HomeService {
     this.runtime = runtime;
     this.store = new HomeStore(runtime.memory.db);
     this.garden = new GardenService(runtime.memory);
+    this.garden.calendar.events.stories.recordObservation = (
+      owner,
+      moment,
+      now,
+    ) => recordGardenObservation(runtime, owner.id, moment, now);
     this.stories = new StoryCircle(runtime.memory);
     this.gardenDelegations = new GardenDelegations(runtime, this);
     this.identityReady = false;

@@ -357,6 +357,66 @@ test("actual Chromium produces a shareable nine-tile PNG and renders the desktop
   );
   await dialog.getByRole("button", { name: "关闭图片" }).click();
   await dialog.waitFor({ state: "detached" });
+  await page.getByRole("button", { name: "花园", exact: true }).click();
+  await panel.locator(".garden-workspace").waitFor();
+
+  for (const [id, event] of Object.entries(rules.events.entries))
+    event.enabled = id === "rain-cat-shelter";
+  garden.configure(now, garden.requireState().settingsRevision, rules);
+  garden.act(
+    now,
+    { kind: "admin", id: "administrator" },
+    {
+      requestId: randomUUID(),
+      action: { kind: "shelter", plot: 1 },
+    },
+  );
+  const advance = async () => {
+    now += DAY;
+    const synced = await callDesktop("client", { action: "sync", data: false });
+    await page.evaluate(
+      (epoch) =>
+        window.pushGardenRoom({
+          live: true,
+          framework: true,
+          connected: true,
+          roomEpoch: epoch,
+          roles: [],
+          messages: [],
+          budget: 5,
+        }),
+      synced.room.roomEpoch,
+    );
+    await panel.getByRole("button", { name: "刷新花园", exact: true }).click();
+  };
+  await advance();
+  await panel.getByRole("button", { name: "今日事件", exact: true }).click();
+  const choices = panel.locator("[data-garden-ticket]");
+  await choices
+    .getByRole("button", { name: "轻轻请它去屋檐下", exact: true })
+    .waitFor();
+  const shelters = choices.getByLabel("选择遮雨棚");
+  assert.deepEqual(await shelters.locator("option").allTextContents(), [
+    "第 1 块棚",
+    "第 2 块棚",
+  ]);
+  await shelters.selectOption({ label: "第 2 块棚" });
+  await choices
+    .getByRole("button", { name: "留一块棚给它躲雨", exact: true })
+    .click();
+  await choices.getByText("第 2 块地暂留给小猫。", { exact: true }).waitFor();
+  assert.equal(
+    await choices
+      .getByRole("button", { name: "轻轻请它去屋檐下", exact: true })
+      .count(),
+    0,
+  );
+  await advance();
+  await panel
+    .locator(".garden-followups")
+    .getByText(/小猫离开前/)
+    .waitFor();
+  assert.equal(garden.read(now).event.kind, "choice");
   assert.deepEqual(pageErrors, []);
 });
 
