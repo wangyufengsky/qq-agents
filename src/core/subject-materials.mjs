@@ -1,3 +1,4 @@
+export { subjectDreamOpening } from "../dream/consumption.mjs";
 import { adminCloseness, personInteraction } from "./closeness.mjs";
 import { APP_CAPABILITIES } from "../apps/adapter.mjs";
 import { APP_LEDGER, inAppHours } from "../apps/policy.mjs";

@@ -25,6 +25,8 @@ import {
   DESKTOP_BROWSER_CONTROL,
   DESKTOP_BODY_CONTROL,
   FUNCTIONAL_AGENT_RESULT,
+  DREAM_STORY,
+  isDreamKind,
   DREAM_LIST,
   DREAM_SUBMIT,
   TOOL_NAMES,
@@ -102,7 +104,7 @@ export function scopedCatalog(runtime, ctx, input) {
     network: {
       autonomous:
         ctx.runtimeKind !== "functional-agent" &&
-        ctx.runtimeKind !== "dream-cognitive" &&
+        !isDreamKind(ctx.runtimeKind) &&
         (ctx.runtimeKind !== "desktop" || ctx.desktopUnified) &&
         a.network?.autonomous === true,
     },
@@ -237,6 +239,7 @@ export function toolAvailable(
     name === DESKTOP_ACTIVITY_DECISION ||
     name === DESKTOP_DECISION ||
     name === DESKTOP_HISTORY ||
+    name === DREAM_STORY ||
     name === DREAM_LIST ||
     name === DREAM_SUBMIT ||
     name === FUNCTIONAL_AGENT_RESULT

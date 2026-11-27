@@ -27,7 +27,7 @@ import {
   captureRecallOpening,
 } from "./memory-recall.mjs";
 import { trackMindRecords } from "./protected-mind.mjs";
-import { subjectMaterials } from "./subject-materials.mjs";
+import { subjectDreamOpening, subjectMaterials } from "./subject-materials.mjs";
 import { mergeProtection } from "../memory/protection.mjs";
 import { rememberSources, sourceHandoff } from "./context-handoff.mjs";
 import { chatRecall } from "./chat-recall.mjs";
@@ -926,10 +926,10 @@ export class ContextLifecycle {
       .forPeople(personIds)
       .filter((entry) => !correctionAllowed || correctionAllowed(entry));
     const activities = activityForTurn(m, ctx.conversation);
-    ctx.cognitionOpening = cognitionContext(r, ctx, {
-      fresh: ctx.initialSession,
-      personIds,
-    });
+    ctx.cognitionOpening =
+      ctx.conversation === SUBJECT
+        ? subjectDreamOpening(r, ctx)
+        : cognitionContext(r, ctx, { fresh: ctx.initialSession, personIds });
     const details = [
       activities.length
         ? `共同活动（继续时先读当前原稿；多个活动不明确时简短确认；轮到对方时等待真实来信）：${JSON.stringify(activities)}`

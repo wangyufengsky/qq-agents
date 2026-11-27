@@ -1,3 +1,4 @@
+import { storyMaterial } from "../dream/story.mjs";
 import { commitCognitionContext } from "./chat-context.mjs";
 import { dreamSources, visibleSource } from "../dream/source-filter.mjs";
 import { toolSpecs } from "../tools/specs.mjs";
@@ -129,6 +130,36 @@ const contracts = Object.freeze({
             ctx.privateRead.add(item.id);
             ctx.fingerprints.set(item.id, item.fingerprint);
           }
+        },
+        callTool: (name, args) => runtime.callFunctionalTool(ctx, name, args),
+        ...toolOutputReceipts(runtime, ctx),
+      };
+    },
+  }),
+  "dream-imaginative": Object.freeze({
+    createExchange(runtime, ctx, { profile, snapshot }) {
+      const { read } = dreamSources(runtime, ctx, snapshot.cursorEnd);
+      return {
+        conversation: `${profile.instanceKey}/${snapshot.runId}`,
+        dream: true,
+        instructions:
+          "创作一篇明确虚构的梦境。以下主题只是创作素材，避免使用可识别的真实人物或地点，不把梦里的事当作现实。灵感只是可选建议。用 dream_story_submit 提交一次；不执行任何行动。使用桥接工具时，仅在 bridge_tools 或 bridge_call 外层传递本轮 context。",
+        prompt: `本轮唯一工具凭据 context=${ctx.token}\n\n创作主题（JSON）：\n${JSON.stringify(storyMaterial(snapshot.items))}`,
+        tools: toolSpecs(ctx.allowedTools),
+        session: null,
+        saveSession() {},
+        beforeInputSubmitted() {
+          runtime.assertActive(ctx);
+          if (
+            snapshot.items.some(
+              (item) => read(item.id)?.fingerprint !== item.fingerprint,
+            )
+          )
+            throw Error("RECALL_SOURCE_NOT_ALLOWED");
+        },
+        onInputSubmitted() {
+          runtime.assertActive(ctx);
+          ctx.backendInputEpoch = ctx.inputEpoch;
         },
         callTool: (name, args) => runtime.callFunctionalTool(ctx, name, args),
         ...toolOutputReceipts(runtime, ctx),

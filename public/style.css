@@ -1012,6 +1012,15 @@ input[type="file"]::file-selector-button {
 .record small {
   color: var(--muted);
 }
+#dream-stories summary strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#dream-stories li {
+  overflow-wrap: anywhere;
+}
 .record ol {
   margin: 10px 0;
   padding-left: 20px;

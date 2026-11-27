@@ -21,6 +21,16 @@ const queryOptions = z.strictObject({
   offset: z.coerce.number().int().min(0).default(0),
 });
 
+/** @param {ReturnType<typeof dreamAgentProfile>} profile */
+function overviewProfile(profile) {
+  return {
+    enabled: Boolean(profile),
+    backendId: profile?.backend.id ?? null,
+    model: profile?.definition.model ?? null,
+    dedicated: profile?.backend.functionalAgentOnly === true,
+  };
+}
+
 const conflicts = new Set([
   "DREAM_DISABLED",
   "DREAM_ALREADY_RUNNING",
@@ -51,18 +61,26 @@ export async function dreamAdmin(runtime, method, url, readBody) {
   const deletePath = /^\/api\/dreams\/cognitions\/([a-z0-9-]+)$/.exec(path);
   try {
     if (method === "GET" && path === "/api/dreams/overview") {
-      const agent = agentFromQuery(),
-        profile = dreamAgentProfile(agent, runtime.config);
+      const agent = agentFromQuery();
+      const cognitive = overviewProfile(
+        dreamAgentProfile(agent, runtime.config),
+      );
+      const imaginative = overviewProfile(
+        dreamAgentProfile(agent, runtime.config, "dream-imaginative"),
+      );
       const daily = dreamDaily(runtime, agent);
       return send({
-        enabled: Boolean(profile),
+        ...(cognitive.enabled ? cognitive : imaginative),
+        cognitive,
+        imaginative: {
+          ...imaginative,
+          used: daily.imaginativeUsed,
+          limit: agent.dream.imaginative.dailyMax,
+        },
         paused: dreamPaused(runtime, agent),
         mode: runtime.config.mode,
         globalPaused: runtime.config.globalPaused,
         rolePaused: agent.paused,
-        backendId: profile?.backend.id ?? null,
-        model: profile?.definition.model ?? null,
-        dedicated: profile?.backend.functionalAgentOnly === true,
         used: daily.used,
         limit: agent.dream.budget.maxRunsPerDay,
         lag: await dreamLag(runtime, agent.id),
@@ -174,7 +192,7 @@ export async function dreamAdmin(runtime, method, url, readBody) {
           mode: z.enum(["nap", "deep", "long", "imaginative"]),
         })
         .parse(await readBody(8192));
-      if (mode !== "nap" && mode !== "deep") throw Error("DREAM_MODE_MISMATCH");
+      if (mode === "long") throw Error("DREAM_MODE_MISMATCH");
       return send(runtime.dreams.trigger(agentId, mode), 202);
     }
     return send({ error: "NOT_FOUND" }, 404);

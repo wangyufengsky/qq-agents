@@ -1,4 +1,5 @@
 // @ts-check
+import { sampleStoryMaterial, storyWatermarks } from "./story.mjs";
 import { randomUUID } from "node:crypto";
 import { prepared } from "../core/recall-boundary.mjs";
 import {
@@ -65,17 +66,18 @@ export function startDream(
     if (previous) return { previous };
     const { starts, version } = checkpoint(db, agentId);
     const limits = { ...starts };
-    for (const partition of SOURCE_PARTITIONS) {
-      const { from, cursor } = SOURCES[partition];
-      const last = prepared(
-        db,
-        `SELECT max(seq) AS last FROM (
+    if (mode !== "imaginative")
+      for (const partition of SOURCE_PARTITIONS) {
+        const { from, cursor } = SOURCES[partition];
+        const last = prepared(
+          db,
+          `SELECT max(seq) AS last FROM (
         SELECT ${cursor} AS seq FROM ${from} WHERE ${sourceRoleColumn(partition)}=? AND ${cursor}>?
         ORDER BY ${cursor} LIMIT ?
       )`,
-      ).get(agentId, starts[partition], batchSize);
-      limits[partition] = Math.max(starts[partition], Number(last?.last));
-    }
+        ).get(agentId, starts[partition], batchSize);
+        limits[partition] = Math.max(starts[partition], Number(last?.last));
+      }
     const cursorEnd = { ...starts },
       items = [];
     const sources = dreamSources(
@@ -83,12 +85,21 @@ export function startDream(
       { agentId, conversation: "@dream" },
       limits,
     );
-    for (const partition of SOURCE_PARTITIONS) {
-      for (const row of sources.scan(partition, starts[partition], batchSize)) {
-        cursorEnd[partition] = row.seq;
-        if (row.item) items.push(row.item);
+    if (mode !== "imaginative")
+      for (const partition of SOURCE_PARTITIONS) {
+        for (const row of sources.scan(
+          partition,
+          starts[partition],
+          batchSize,
+        )) {
+          cursorEnd[partition] = row.seq;
+          if (row.item) items.push(row.item);
+        }
       }
-    }
+    if (mode === "imaginative")
+      items.push(
+        ...sampleStoryMaterial(runtime, { agentId, conversation: "@dream" }),
+      );
     const runId = queuedId ?? randomUUID(),
       time = new Date(runtime.now()).toISOString();
     if (queuedId) {
@@ -131,7 +142,7 @@ export function startDream(
       runId,
       agentId,
       cursorStart: starts,
-      cursorEnd,
+      cursorEnd: mode === "imaginative" ? storyWatermarks : cursorEnd,
       snapshotVersion: version,
       items: items.sort(
         (a, b) =>

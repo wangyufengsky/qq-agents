@@ -1,6 +1,12 @@
 // @ts-check
 import { z } from "zod";
-import { DREAM_LIST, DREAM_SUBMIT } from "./names.mjs";
+import {
+  DREAM_LIST,
+  DREAM_SUBMIT,
+  DREAM_STORY,
+  isDreamKind,
+} from "./names.mjs";
+import { storyPatch } from "../dream/story.mjs";
 import { category, cognitionPatch, scopeId } from "../dream/validator.mjs";
 
 const pageSize = z.number().int().min(1).max(20).optional();
@@ -8,6 +14,10 @@ const id = z.string().min(1).max(120);
 const offset = z.number().int().min(0).optional();
 const maxChars = z.number().int().min(1).max(8000).optional();
 export const dreamDefinitions = {
+  [DREAM_STORY]: [
+    "提交本次虚构梦境和可选生活灵感建议。仅使用本轮给出的创作主题；禁止写入现实认知或发起行动。accepted 表示提议已通过校验，正常结束后才会保存。",
+    storyPatch,
+  ],
   [DREAM_LIST]: [
     "查找本角色已有的长期认知，UPDATE 须引用其中的 id 和当前 version。可以按作用域、类别、状态及关键词筛选，用 nextOffset 续页。",
     z.strictObject({
@@ -47,6 +57,6 @@ export const dreamReadDefinitions = {
 
 /** @param {any} runtime @param {any} ctx @param {string} name @param {any} args */
 export function dreamTool(runtime, ctx, name, args) {
-  if (ctx.runtimeKind !== "dream-cognitive") throw Error("TOOL_DISABLED");
+  if (!isDreamKind(ctx.runtimeKind)) throw Error("TOOL_DISABLED");
   return runtime.dreams.call(ctx, name, args);
 }
