@@ -6,6 +6,11 @@ import {
 import { explorerPresets } from "./garden-explorer-rules.mjs";
 import { createHash } from "node:crypto";
 import {
+  tableAvailable,
+  tablePresets,
+  tableStoryIds,
+} from "./garden-table-rules.mjs";
+import {
   explorerAvailable,
   explorerStoryIds,
 } from "./garden-explorer-rules.mjs";
@@ -68,6 +73,7 @@ const choiceOption = z.strictObject({
     .optional(),
 });
 const effect = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("table"), story: z.enum(tableStoryIds) }),
   z.strictObject({
     kind: z.literal("explorer"),
     story: z.enum(explorerStoryIds),
@@ -187,22 +193,23 @@ const condition = z.union([
   }),
 ]);
 export const gardenEventCapacity = 78;
-export const eventPool = z
-  .strictObject({
-    rate: z.number().min(0).max(1),
-    entries: z.record(
-      poolEntryId,
-      z.strictObject({
-        name: z.string().trim().min(1).max(40),
-        enabled: z.boolean(),
-        weight: z.number().min(0).max(10000),
-        mode: z.enum(["all", "any"]),
-        conditions: z.array(condition).max(12),
-        effect,
-      }),
-    ),
-  })
-  .refine(({ entries }) => Object.keys(entries).length <= gardenEventCapacity);
+export const eventPoolStructure = z.strictObject({
+  rate: z.number().min(0).max(1),
+  entries: z.record(
+    poolEntryId,
+    z.strictObject({
+      name: z.string().trim().min(1).max(40),
+      enabled: z.boolean(),
+      weight: z.number().min(0).max(10000),
+      mode: z.enum(["all", "any"]),
+      conditions: z.array(condition).max(12),
+      effect,
+    }),
+  ),
+});
+export const eventPool = eventPoolStructure.refine(
+  ({ entries }) => Object.keys(entries).length <= gardenEventCapacity,
+);
 export const legacyEvents = eventPool.parse({
   rate: 0.4,
   entries: {
@@ -398,6 +405,7 @@ export const defaultEvents = eventPool.parse({
     ...legacyEvents.entries,
     ...storyPresets,
     ...explorerPresets,
+    ...tablePresets,
     merchant: {
       ...legacyEvents.entries.merchant,
       effect: {
@@ -713,6 +721,11 @@ export function eventOdds(settings, ctx, weather) {
     (id) => {
       const { effect } = pool.entries[id];
       if (guaranteed && id !== fullMoon) return "full_moon";
+      if (
+        effect.kind === "table" &&
+        !tableAvailable(effect.story, ctx, weather)
+      )
+        return "story_unavailable";
       if (
         effect.kind === "explorer" &&
         !explorerAvailable(effect.story, ctx, weather)

@@ -96,6 +96,7 @@ export class GardenCalendar {
       seeds: state.seeds,
       harvests,
       caretakers,
+      ...this.events.tables.context(),
       birdBath: hasGardenFacility(this.db, "bird_bath"),
       plots: state.plots,
       day: (previous?.day ?? 0) + 1,
@@ -371,6 +372,7 @@ export class GardenCalendar {
     this.events.explorers.settleVisits(state, priorDay, now, closingWeather);
     this.events.close(priorDay, state, now);
     this.events.settleFollowups(priorDay + 1, state, now, !preview);
+    this.events.tables.settle(priorDay + 1);
     const context = this.drawContext(state, current);
     return { context, next: this.drawNextWeather(state, current, context) };
   }

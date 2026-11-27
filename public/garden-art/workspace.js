@@ -94,6 +94,38 @@ const gardenCropName = (state, id) => state.crops[id]?.name || id;
 const gardenButton = (kind, text, main = false, disabled = false) =>
   `<button type="button" class="ghost${main ? " garden-main-action" : ""}" data-garden-act="${kind}"${disabled ? " disabled" : ""}>${text}</button>`;
 
+function gardenHarvestTraits({
+  cropId,
+  harvestStage,
+  ear,
+  leafFront,
+  leafBack,
+}) {
+  const stage = {
+    tender: cropId === "sweet-corn" ? "嫩棒" : "嫩瓜",
+    dry: "干棒",
+    hard: "硬壳",
+  }[harvestStage];
+  return [
+    ear == null ? "" : `第 ${ear} 茬`,
+    stage,
+    leafFront && leafBack ? `叶面 ${leafFront} · 叶背 ${leafBack}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+function gardenLotLabel(state, lot) {
+  return [
+    gardenCropName(state, lot.cropId),
+    gardenHarvestTraits(lot),
+    gardenQuality[lot.quality],
+    `余 ${lot.quantity} 份`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
 function gardenPlotMarkup({ id, plant, sheltered }, selected, bird) {
   const status = art.gardenPlotStatus(plant);
   const stage = plant
@@ -107,7 +139,9 @@ function gardenPlotMarkup({ id, plant, sheltered }, selected, bird) {
         ? "花瓣卷起"
         : explorer?.silverBeads
           ? "绒叶带银珠"
-          : explorer?.leafShape;
+          : (explorer?.leafShape ??
+            (explorer &&
+              gardenHarvestTraits({ cropId: plant.cropId, ...explorer })));
   return `<button type="button" class="garden-plot desktop-garden-tile garden-map-tile" data-stage="${status}" data-plot="${id}" aria-pressed="${id === selected}">
     <span class="garden-tile-top"><span aria-label="第 ${id} 块">${String(id).padStart(2, "0")}</span></span>
     ${art.gardenArtMarkup(art.gardenLayers({ plant, sheltered }))}
@@ -162,8 +196,9 @@ function gardenPlotDetail(state, plot) {
     <p>${sheltered ? "有棚" : "露天"} · ${stage}${plant.quality ? " · " + gardenQuality[plant.quality] : ""}</p>
     ${plant.crop.maxHarvests > 1 ? `<p>已收 ${plant.harvestCount ?? 0} / ${plant.crop.maxHarvests} 茬</p>` : ""}
     ${plant.neighborBuffs?.length ? `<p>${plant.neighborBuffs.map(esc).join(" · ")}</p>` : ""}
-    ${plant.explorer?.text ? `<p class="garden-plant-clue">${esc(plant.explorer.text)}</p>` : ""}
+    ${plant.explorer?.text && !plant.explorer.leafFront ? `<p class="garden-plant-clue">${esc(plant.explorer.text)}</p>` : ""}
     ${plant.explorer?.silverBeads && plant.explorer.leafShape ? `<p>叶形 · ${esc(plant.explorer.leafShape)}</p>` : ""}
+    ${plant.explorer?.leafFront && plant.explorer?.leafBack ? `<p class="garden-ink-duo"><span>叶面 ${esc(plant.explorer.leafFront)}</span><span data-leaf-color="${plant.explorer.leafBack.includes("橙") ? "orange" : plant.explorer.leafBack.includes("玫") ? "rose" : "purple"}">叶背 ${esc(plant.explorer.leafBack)}</span></p>` : ""}
     ${plant.explorer?.rattles?.length ? '<button type="button" class="ghost" data-listen-pea>听豆荚</button>' : ""}
     ${
       plant.status === "growing"
@@ -231,7 +266,7 @@ function gardenWarehouse(state, guideOpen) {
           (
             item,
           ) => `<article class="garden-good garden-harvest" data-search-stock data-harvest="${esc(item.id)}">
-      ${productArt("crop", item.cropId)}<p><strong>${esc(gardenCropName(state, item.cropId))}</strong> · ${gardenQuality[item.quality]} · 库存 ${item.quantity} · 单价约 ${gardenMoney(item.saleRate)}/份</p>
+      ${productArt("crop", item.cropId)}<p><strong>${esc(gardenCropName(state, item.cropId))}</strong> · ${item.harvestStage || item.leafFront ? `${esc(gardenHarvestTraits(item))} · ` : ""}${gardenQuality[item.quality]} · 库存 ${item.quantity} · 单价约 ${gardenMoney(item.saleRate)}/份</p>
       <fieldset${state.pauseReason ? " disabled" : ""}>
         <label>数量<input data-garden-sale-count type="number" required min="1" max="${item.quantity}" step="1" value="1"/></label>
         <p>总价 <output data-sale-total>${gardenMoney(Math.round(item.saleRate))}</output></p>
@@ -441,6 +476,7 @@ const kindLabels = {
   choice: "花园抉择",
   story: "花园小景",
   explorer: "花园探索",
+  table: "花园小聚",
 };
 const effectCopy = {
   cat: "日终仍未哄走时，它会撤掉一座现有的棚。",
@@ -462,7 +498,13 @@ function gardenChoiceEntry(state, control, index) {
 
 function gardenChoiceAction(state, control, index) {
   const action = gardenChoiceEntry(state, control, index);
-  return action ? { kind: action.kind, ...action.args } : null;
+  return action
+    ? {
+        kind: action.kind,
+        ...action.args,
+        ...(action.textPrompt && { text: control.elements.text.value.trim() }),
+      }
+    : null;
 }
 
 function gardenChoiceOptions(state, project, projectIndex) {
@@ -473,17 +515,32 @@ function gardenChoiceOptions(state, project, projectIndex) {
     if (!choices.has(key)) choices.set(key, []);
     choices.get(key).push({ action, index });
   });
-  const explorer = project || state.event.kind === "explorer";
-  const targetLabel = ({ plot, harvestId }) => {
+  const explorer = project || ["explorer", "table"].includes(state.event.kind);
+  const targetLabel = ({ plot, harvestId, itemId, cropId }) => {
+    if (itemId !== undefined) {
+      const items = state.personalGifts?.items ?? [];
+      const item = items.find(({ id }) => id === itemId);
+      if (!item) return "我的物品";
+      const copies = items.filter(({ giftId }) => giftId === item.giftId);
+      return [
+        item.name,
+        copies.length > 1 ? `第 ${copies.indexOf(item) + 1} 份` : "",
+        item.slot ? `展示第 ${item.slot} 格` : "",
+      ]
+        .filter(Boolean)
+        .join(" · ");
+    }
+    if (harvestId !== undefined) {
+      const lot = state.market.find(({ id }) => id === harvestId);
+      return lot ? gardenLotLabel(state, lot) : "仓库收成";
+    }
+    if (cropId !== undefined) return gardenCropName(state, cropId);
     if (plot !== undefined) {
       if (!explorer) return `第 ${plot} 块棚`;
       const plant = state.plots.find(({ id }) => id === plot)?.plant;
       return `第 ${plot} 块地${plant ? " · " + (plant.variantName || plant.crop.name) : ""}`;
     }
-    const lot = state.market.find(({ id }) => id === harvestId);
-    return lot
-      ? `${gardenCropName(state, lot.cropId)} · ${gardenQuality[lot.quality]} · 余 ${lot.quantity} 份`
-      : "仓库收成";
+    return "";
   };
   return [...choices.values()]
     .map((entries) => {
@@ -492,18 +549,34 @@ function gardenChoiceOptions(state, project, projectIndex) {
         (project ? undefined : state.event.effect.options)?.find(
           ({ id }) => id === action.args.choiceId,
         )?.label ?? action.label;
+      const { plot, harvestId, itemId, cropId } = action.args;
       const target =
-        action.args.plot !== undefined || action.args.harvestId !== undefined;
+        itemId !== undefined
+          ? "选择我的物品"
+          : harvestId !== undefined
+            ? "选择一份收成"
+            : cropId !== undefined
+              ? "选择一种作物"
+              : plot !== undefined
+                ? explorer
+                  ? "选择地块"
+                  : "选择遮雨棚"
+                : "";
       const description = action.description
         ? `<p>${esc(action.description)}</p>`
         : "";
-      if (!target)
+      if (!target && !action.textPrompt)
         return `<div class="garden-choice">${description}${eventButton(action, index, state.pauseReason, label, projectIndex)}</div>`;
       return `<form class="garden-choice" data-garden-choice${projectIndex === undefined ? "" : ` data-garden-project-index="${projectIndex}"`}>${description}
         <fieldset${state.pauseReason ? " disabled" : ""}>
-          <label>${action.args.plot !== undefined ? (explorer ? "选择地块" : "选择遮雨棚") : "选择一份收成"}<select name="choice"${explorer ? " data-update-choice-label" : ""} required>
+          ${
+            target
+              ? `<label>${target}<select name="choice" aria-label="${target}"${explorer ? " data-update-choice-label" : ""} required>
             ${entries.map(({ action, index }) => gardenOption(index, targetLabel(action.args))).join("")}
-          </select></label>
+          </select></label>`
+              : `<input type="hidden" name="choice" value="${index}">`
+          }
+          ${action.textPrompt ? `<label>${esc(action.textPrompt)}<input name="text" type="text" required></label>` : ""}
           <button type="submit" class="ghost">${esc(label)}</button>
         </fieldset></form>`;
     })
@@ -556,11 +629,11 @@ function eventBody(state, view) {
     fulfilled: "奖励已领取",
   }[event.status];
   let details = "";
-  if (["choice", "story", "explorer"].includes(event.kind)) {
+  if (["choice", "story", "explorer", "table"].includes(event.kind)) {
     if (outcome.label) details += `<p>已选 · ${esc(outcome.label)}</p>`;
     if (outcome.detail)
       details += `<p role="status">${esc(outcome.detail)}</p>`;
-    if (event.kind === "explorer" && outcome.plots?.length)
+    if (["explorer", "table"].includes(event.kind) && outcome.plots?.length)
       details += `<div class="garden-event-actions">${outcome.plots.map((plot) => `<button type="button" class="ghost" data-garden-jump="${esc(plot)}">看第 ${esc(plot)} 块地</button>`).join("")}</div>`;
     if (outcome.pausedPlot)
       details += `<p>第 ${esc(outcome.pausedPlot)} 块地暂留给小猫。</p>`;
@@ -573,7 +646,7 @@ function eventBody(state, view) {
           : "<p>候鸟歇脚的植株已离开花圃。</p>";
     }
     if (
-      ["choice", "explorer"].includes(event.kind) &&
+      ["choice", "explorer", "table"].includes(event.kind) &&
       event.status === "open" &&
       !state.eventActions.length
     )
@@ -625,7 +698,7 @@ function eventBody(state, view) {
     if (empty && state.mysterySeeds?.count)
       details += `<button type="button" class="ghost" data-garden-jump="${empty.id}">去空地播种</button>`;
   }
-  const actions = ["choice", "explorer"].includes(event.kind)
+  const actions = ["choice", "explorer", "table"].includes(event.kind)
     ? gardenChoiceOptions(state)
     : state.eventActions
         .map((entry, index) => {
@@ -746,12 +819,13 @@ function personalGiftMarkup(state, view) {
         <h4>第 ${index + 1} 份${item.slot ? ` · 展示格 ${item.slot}` : ""}</h4>
         ${source ? giftSource(source) : item.craftMeta ? "<p>花园手作</p>" : art.gardenGifts[giftId]?.eventOnly ? "<p>花园纪念品</p>" : "<p>自己购买</p>"}
         ${craftOrigin(item.craftMeta)}
+        ${item.loaned ? "<p>窗边借用中，明早归还。</p>" : ""}
         ${art.gardenGifts[giftId]?.eventOnly && item.description ? `<p>${esc(item.description)}</p>` : ""}
-        <details><summary>送给伙伴</summary><form data-garden-form="send_gift"><fieldset${state.pauseReason ? " disabled" : ""}>
+        <details><summary>送给伙伴</summary><form data-garden-form="send_gift"><fieldset${state.pauseReason || item.loaned ? " disabled" : ""}>
           ${selectRecipient(state)}${noteInput()}<button type="submit">确认赠送</button>
         </fieldset></form></details>
         <details><summary>${item.slot ? "换位或更新展示" : "摆入展示栏"}</summary>
-          <form data-garden-form="display_gift"><fieldset${state.pauseReason ? " disabled" : ""}>
+          <form data-garden-form="display_gift"><fieldset${state.pauseReason || item.loaned ? " disabled" : ""}>
           <label>展示格<select name="slot">${giftShelfSlots
             .map((slot) => {
               const occupant = shelf.find((entry) => entry.slot === slot);
@@ -762,7 +836,7 @@ function personalGiftMarkup(state, view) {
           ${source?.note ? `<label><input type="checkbox" name="publishNote"${item.note ? " checked" : ""}>公开这份礼物的赠言</label>` : ""}
           <button type="submit">确认展示</button>
         </fieldset></form></details>
-        ${item.usable ? `<form data-garden-form="use_gift"><button type="submit"${state.pauseReason ? " disabled" : ""}>吃掉这份</button></form>` : ""}
+        ${item.usable && !item.loaned ? `<form data-garden-form="use_gift"><button type="submit"${state.pauseReason ? " disabled" : ""}>吃掉这份</button></form>` : ""}
       </section>`;
       })
       .join("")}</details></article>`,
@@ -803,8 +877,7 @@ function gardenCraftMarkup(state) {
           suggestedHarvestIds,
         } = recipe;
         const lots = state.market.filter((lot) => harvestIds.includes(lot.id));
-        const names = (lot) =>
-          `${gardenCropName(state, lot.cropId)} · ${gardenQuality[lot.quality]} · 余 ${lot.quantity} 份`;
+        const names = (lot) => gardenLotLabel(state, lot);
         const ingredients = Array.from(
           { length: ingredientCount },
           (_, index) => {
@@ -1304,6 +1377,13 @@ export function bindGardenWorkspace(
         form,
         form.elements.choice.value,
       );
+      if (
+        action?.text !== undefined &&
+        (!action.text || [...action.text].length > 120)
+      ) {
+        onStatus?.("请填写 1 到 120 个字。");
+        return;
+      }
       if (action) act(action);
       return;
     }

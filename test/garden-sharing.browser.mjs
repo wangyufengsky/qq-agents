@@ -649,6 +649,111 @@ test("native Electron garden tab reaches shared state through its focused panel 
   }
 });
 
+test("native Electron independently chooses a real harvest and names a table dish", async (t) => {
+  const executablePath = process.env.QQ_TEST_ELECTRON;
+  if (!executablePath) {
+    t.skip("Set QQ_TEST_ELECTRON for the native desktop check");
+    return;
+  }
+  const cfg = config(1);
+  cfg.desktopHome.enabled = true;
+  const { runtime, root } = fixture(t, { cfg });
+  const admin = randomUUID(),
+    profile = path.join(root, "electron");
+  await mkdir(profile);
+  await writeFile(path.join(root, "desktop-home-token"), desktopToken(admin));
+  const garden = runtime.home.garden;
+  const settings = defaultGardenSettings();
+  settings.weather = fixedWeather();
+  settings.events.rate = 1;
+  for (const [id, event] of Object.entries(settings.events.entries))
+    event.weight = Number(id === "mixed-menu");
+  settings.crops.radish.hours = 1;
+  let now = Date.UTC(2026, 0, 1);
+  runtime.clock = () => now;
+  garden.initialize(now, settings);
+  garden.syncClock(now, true);
+  const act = (action) =>
+    garden.act(
+      now,
+      { kind: "admin", id: "administrator" },
+      {
+        requestId: randomUUID(),
+        action,
+      },
+    );
+  const { plantId } = act({
+    kind: "plant",
+    cropId: "radish",
+    plot: 1,
+    buyPrice: settings.crops.radish.seedPrice,
+  });
+  now += 3 * HOUR;
+  garden.syncClock(now, true);
+  act({ kind: "harvest", plot: 1, plantId });
+  now += DAY;
+  garden.syncClock(now, true);
+  const server = createServer({ runtime, token: admin, allowLive: true });
+  t.after(() => server.close());
+  const port = await server.listen();
+  const electron = await _electron.launch({
+    executablePath,
+    args: [fileURLToPath(new URL("../desktop/home/", import.meta.url))],
+    env: {
+      ...process.env,
+      DESKTOP_HOME_TRIAL_PROFILE: profile,
+      DESKTOP_HOME_DATA_ROOT: root,
+      DESKTOP_HOME_LIVE_ROOT: "",
+      DESKTOP_HOME_PORT: String(port),
+    },
+  });
+  try {
+    const door = await electron.firstWindow();
+    await door.locator(".door-button").click();
+    let panel;
+    for (let i = 0; i < 80 && !panel; i++) {
+      panel = electron
+        .windows()
+        .find((value) => value.url().includes("type=panel"));
+      if (!panel) await delay(100);
+    }
+    assert.ok(panel);
+    await panel.getByRole("button", { name: "花园", exact: true }).click();
+    await panel.getByRole("button", { name: "今日事件", exact: true }).click();
+    const ticket = panel.locator("[data-garden-ticket]");
+    await ticket
+      .getByRole("heading", {
+        name: settings.events.entries["mixed-menu"].name,
+        exact: true,
+      })
+      .waitFor();
+    await ticket
+      .getByLabel("选择一份收成")
+      .getByText(/樱桃小萝卜/)
+      .waitFor({ state: "attached" });
+    await ticket
+      .getByRole("button", { name: /做一道尝味小菜.*樱桃小萝卜/ })
+      .click();
+    const options = ticket.getByLabel("选择一种作物");
+    const actualCrop = (await options.locator("option").allTextContents()).find(
+      (name) => name === "樱桃小萝卜",
+    );
+    assert.ok(actualCrop);
+    await options.selectOption({ label: actualCrop });
+    await ticket.getByRole("button", { name: /尝尝看.*樱桃小萝卜/ }).click();
+    await ticket.getByText(/今天用的是樱桃小萝卜/).waitFor();
+    await ticket
+      .getByRole("textbox", { name: "今天这道菜叫什么？" })
+      .fill("小窝萝卜盏");
+    await ticket
+      .getByRole("button", { name: "给这桌菜起名", exact: true })
+      .click();
+    await ticket.getByText(/小窝萝卜盏/).waitFor();
+  } finally {
+    await electron.close();
+  }
+});
+
 test("Chromium renders distinct morning and afternoon flower cards with the same frame and no dedicated sticker", async (t) => {
   const { runtime } = fixture(t, { cfg: config(1) });
   let now = Date.UTC(2026, 0, 1);

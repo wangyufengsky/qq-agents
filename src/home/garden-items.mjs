@@ -25,7 +25,7 @@ export const gardenGiftId = z.enum(
 /** @typedef {{owner:Person,recipient:(recipient:{kind:"admin"|"agent",id:string})=>Person|undefined}} GiftContext */
 /** @typedef {{giftId:keyof typeof gardenGifts,name:string,price:number,originalPrice:number,stock:number,usable:boolean}} GiftOffer */
 /** @typedef {import("./garden-craft.mjs").CraftMeta} CraftMeta */
-/** @typedef {{id:string,giftId:string,name:string,usable:number,slot:number|null,sourceId:string|null,description:string,note:string,craftMeta?:CraftMeta}} Item */
+/** @typedef {{id:string,giftId:string,name:string,usable:number,slot:number|null,sourceId:string|null,description:string,note:string,craftMeta?:CraftMeta,loaned?:number}} Item */
 /** @typedef {{id:string,itemId:string,giftId:string,name:string,note:string,day:number,at:number,giver:Person,recipient:Person,craftMeta?:CraftMeta}} Transfer */
 
 /** @param {{giftId:keyof typeof gardenGifts,price?:number,stock:number}[]} configured */
@@ -102,7 +102,7 @@ export function isGiftAction(action) {
 }
 
 /** @param {Owner} owner */
-function ownerKey(owner) {
+export function gardenOwnerKey(owner) {
   return JSON.stringify([owner.kind, owner.id, owner.generation]);
 }
 
@@ -195,20 +195,21 @@ export class GardenGifts {
     this.db = db;
   }
 
-  /** @param {Owner} owner @param {keyof typeof gardenGifts} giftId @param {string} [description] */
-  grantEventItem(owner, giftId, description = "") {
+  /** @param {Owner} owner @param {keyof typeof gardenGifts} giftId @param {string} [description] @param {CraftMeta} [craftMeta] */
+  grantEventItem(owner, giftId, description = "", craftMeta) {
     const gift = gardenGifts[giftId];
     this.db
       .prepare(
-        "INSERT INTO garden_items(id,gift_id,name,usable,owner,event_note) VALUES(?,?,?,?,?,?)",
+        "INSERT INTO garden_items(id,gift_id,name,usable,owner,event_note,craft_meta) VALUES(?,?,?,?,?,?,?)",
       )
       .run(
         randomUUID(),
         giftId,
         gift.name,
         Number(gift.usable),
-        ownerKey(owner),
+        gardenOwnerKey(owner),
         description,
+        craftMeta ? JSON.stringify(craftMeta) : null,
       );
   }
 
@@ -249,7 +250,7 @@ export class GardenGifts {
       .prepare(
         `SELECT value FROM garden_item_transfers WHERE ${field}=? ORDER BY rowid DESC`,
       )
-      .all(ownerKey(owner))
+      .all(gardenOwnerKey(owner))
       .map((row) => {
         const { giver, recipient, ...gift } = /** @type {Transfer} */ (
           JSON.parse(String(row.value))
@@ -289,10 +290,11 @@ export class GardenGifts {
       .prepare(
         `
       SELECT slot,gift_id AS giftId,name,COALESCE(NULLIF(description,''),event_note) AS description,public_note AS note,craft_meta
-      FROM garden_items WHERE owner=? AND consumed=0 AND slot IS NOT NULL ORDER BY slot
+      FROM garden_items WHERE owner=? AND consumed=0 AND slot IS NOT NULL
+      AND NOT EXISTS(SELECT 1 FROM garden_table_loans WHERE item_id=garden_items.id) ORDER BY slot
     `,
       )
-      .all(ownerKey(owner))
+      .all(gardenOwnerKey(owner))
       .map(({ slot, giftId, name, description, note, craft_meta }) => ({
         slot: Number(slot),
         giftId: String(giftId),
@@ -326,15 +328,16 @@ export class GardenGifts {
         this.db
           .prepare(
             `
-      SELECT id,gift_id AS giftId,name,usable,slot,source_id AS sourceId,COALESCE(NULLIF(description,''),event_note) AS description,public_note AS note,craft_meta
+      SELECT id,gift_id AS giftId,name,usable,slot,source_id AS sourceId,COALESCE(NULLIF(description,''),event_note) AS description,public_note AS note,craft_meta,EXISTS(SELECT 1 FROM garden_table_loans WHERE item_id=garden_items.id) AS loaned
       FROM garden_items WHERE owner=? AND consumed=0 ORDER BY rowid DESC
     `,
           )
-          .all(ownerKey(owner))
+          .all(gardenOwnerKey(owner))
       )
-    ).map(({ sourceId, craft_meta, ...row }) => ({
+    ).map(({ sourceId, craft_meta, loaned, ...row }) => ({
       ...row,
       usable: Boolean(row.usable),
+      ...(loaned && { loaned: true }),
       ...(craft_meta && { craftMeta: JSON.parse(craft_meta) }),
       source: sourceId ? sources.get(sourceId) : undefined,
     }));
@@ -355,9 +358,10 @@ export class GardenGifts {
           `
       SELECT id,gift_id AS giftId,name,usable,slot,source_id AS sourceId,COALESCE(NULLIF(description,''),event_note) AS description,public_note AS note,craft_meta
       FROM garden_items WHERE id=? AND owner=? AND consumed=0
+      AND NOT EXISTS(SELECT 1 FROM garden_table_loans WHERE item_id=garden_items.id)
     `,
         )
-        .get(id, ownerKey(owner))
+        .get(id, gardenOwnerKey(owner))
     );
     if (!item) throw Error("GARDEN_ITEM_UNAVAILABLE");
     const { craft_meta, ...fields } = item;
@@ -393,8 +397,8 @@ export class GardenGifts {
         itemId,
         gift.giftId,
         gift.name,
-        ownerKey(giver),
-        ownerKey(recipient),
+        gardenOwnerKey(giver),
+        gardenOwnerKey(recipient),
         JSON.stringify(transfer),
         at,
       );
@@ -404,7 +408,7 @@ export class GardenGifts {
       UPDATE garden_items SET owner=?,source_id=?,slot=NULL,description='',public_note='' WHERE id=?
     `,
       )
-      .run(ownerKey(recipient), transfer.id, itemId);
+      .run(gardenOwnerKey(recipient), transfer.id, itemId);
     return transfer;
   }
 
@@ -423,7 +427,7 @@ export class GardenGifts {
     hasRack = false,
   ) {
     const { owner } = context;
-    const key = ownerKey(owner);
+    const key = gardenOwnerKey(owner);
     const recipient =
       "recipient" in action && action.recipient
         ? context.recipient(action.recipient)
@@ -431,7 +435,7 @@ export class GardenGifts {
     if (
       "recipient" in action &&
       action.recipient &&
-      (!recipient || ownerKey(recipient) === key)
+      (!recipient || gardenOwnerKey(recipient) === key)
     )
       throw Error("GARDEN_RECIPIENT_UNAVAILABLE");
     if (action.kind === "buy_gift") {

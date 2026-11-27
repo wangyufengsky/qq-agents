@@ -203,3 +203,39 @@ test("an existing full 48-entry pool gains this edition once and keeps custom se
     undefined,
   );
 });
+
+test("a garden with 78 customized events gains the table edition and its full pool remains editable", (t) => {
+  const f = setup(t, "windmill");
+  const state = f.garden.requireState();
+  const base = state.settings.events.entries.visitor;
+  state.settings.events.entries = Object.fromEntries(
+    Array.from({ length: 78 }, (_, i) => [
+      `custom-${i}`,
+      { ...base, name: `自己留下的条目 ${i}` },
+    ]),
+  );
+  f.store.db
+    .prepare("UPDATE garden_state SET settings=? WHERE id=1")
+    .run(JSON.stringify(state.settings));
+  f.store.db
+    .prepare("DELETE FROM garden_explorer_editions WHERE edition=2")
+    .run();
+  f.reopen();
+  const upgraded = f.garden.requireState();
+  assert.equal(Object.keys(upgraded.settings.events.entries).length, 88);
+  for (const [id, old] of Object.entries(state.settings.events.entries))
+    assert.deepEqual(upgraded.settings.events.entries[id], old);
+  upgraded.settings.events.entries["custom-77"].enabled = false;
+  f.garden.configure(
+    f.runtime.now(),
+    upgraded.settingsRevision,
+    upgraded.settings,
+  );
+  f.reopen();
+  const saved = f.garden.requireState();
+  assert.equal(saved.settings.events.entries["custom-77"].enabled, false);
+  saved.settings.events.entries["extra-custom"] = base;
+  assert.throws(() =>
+    f.garden.configure(f.runtime.now(), saved.settingsRevision, saved.settings),
+  );
+});
