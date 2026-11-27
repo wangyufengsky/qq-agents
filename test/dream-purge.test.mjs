@@ -790,3 +790,35 @@ test("removing one diary revision invalidates only the cognition that cites it",
     new RegExp(secret),
   );
 });
+
+test("deleting earlier revisions out of order preserves children of the next surviving revision", (t) => {
+  const { runtime, store } = fixture(t),
+    memory = store.bind(role);
+  const diary = memory.diaryWrite(
+    { title: "日记", body: "第一版" },
+    "ai-diary",
+    { conversation: scope },
+  );
+  for (const revision of [1, 2])
+    memory.diaryRevise({
+      id: diary.id,
+      expectedRevision: revision,
+      title: "日记",
+      body: "修订" + (revision + 1),
+    });
+  const child = memory.diaryWrite(
+    { title: "引用第三版", body: safe, evidence: [diary.id] },
+    "ai-diary",
+    { conversation: scope },
+  );
+  commit(runtime, role, add("third", [child.id], safe));
+  const erase = store.db.prepare(
+    "DELETE FROM diary_revisions WHERE id=? AND revision=?",
+  );
+  erase.run(diary.id, 2);
+  erase.run(diary.id, 1);
+  const row = store.db
+    .prepare("SELECT status,content,version FROM cognitions")
+    .get();
+  assert.deepEqual({ ...row }, { status: "active", content: safe, version: 1 });
+});

@@ -6,10 +6,13 @@ import { dreamEventParents } from "./provenance.mjs";
 export function initializeDreamPurge(db) {
   // Diary-to-diary references can be ordered by revision rowid, including
   // same-millisecond writes. Other records use their stored reference time.
+  const nextRevision = `LEFT JOIN diary_revisions next ON next.id=r.id AND next.revision=(
+    SELECT min(other.revision) FROM diary_revisions other WHERE other.id=r.id AND other.revision>r.revision
+  )`;
   const dependencyClosure = `sources(id,since_at,until_at,seq,until_seq,revision) AS (
     SELECT NEW.source_id,r.written_at,next.written_at,r.seq,next.seq,NEW.source_revision
     FROM (SELECT 1) LEFT JOIN diary_revisions r ON r.id=NEW.source_id AND r.revision=NEW.source_revision
-    LEFT JOIN diary_revisions next ON next.id=r.id AND next.revision=r.revision+1
+    ${nextRevision}
     WHERE NEW.source_type<>'cognition'
     UNION
     SELECT d.source_id,CASE WHEN d.seq IS NOT NULL THEN d.used_at END,d.until_at,d.seq,d.until_seq,d.revision
@@ -32,9 +35,7 @@ export function initializeDreamPurge(db) {
     UNION ALL
     SELECT d.agent_id,d.id,parent.value,r.written_at,next.written_at,r.rowid,next.rowid,r.revision,NULL
     FROM diaries d JOIN diary_revisions r ON r.id=d.id
-    LEFT JOIN diary_revisions next ON next.id=r.id AND next.revision=(
-      SELECT min(other.revision) FROM diary_revisions other WHERE other.id=r.id AND other.revision>r.revision
-    )
+    ${nextRevision}
     JOIN json_each(r.metadata,'$.evidence') parent
     WHERE parent.type='text' AND parent.value NOT LIKE 'context:%'
     UNION ALL
