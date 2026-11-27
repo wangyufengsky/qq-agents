@@ -28,14 +28,14 @@ import {
   visibleCognitionEvidence,
 } from "./store.mjs";
 
-/** @typedef {{signal?:AbortSignal,idempotencyKey?:string,mode?:"nap"|"deep"|"imaginative",trigger?:"manual"|"idle"|"rhythm-sleep"|"rest"|"threshold",queuedId?:string}} RunOptions */
+/** @typedef {{signal?:AbortSignal,idempotencyKey?:string,mode?:"nap"|"deep"|"long"|"imaginative",trigger?:"manual"|"idle"|"rhythm-sleep"|"rest"|"threshold",queuedId?:string}} RunOptions */
 /** @typedef {import("./store.mjs").Snapshot} Snapshot */
 /** @typedef {import("./source-filter.mjs").DreamSource} Source */
 
 export class DreamRunner {
   /** @type {Map<string, object>} */
   #active = new Map();
-  /** @type {Map<string,{id:string,mode:"nap"|"deep"|"imaginative"}>} */
+  /** @type {Map<string,{id:string,mode:"nap"|"deep"|"long"|"imaginative"}>} */
   #manual = new Map();
   /** @type {WeakMap<object, {snapshot:Snapshot,patch?:unknown, acknowledgeStory:()=>void}>} */
   #invocations = new WeakMap();
@@ -69,7 +69,7 @@ export class DreamRunner {
     return this.#active.size < this.concurrency && this.#manual.size === 0;
   }
 
-  /** @param {string} agentId @param {"nap"|"deep"|"imaginative"} mode */
+  /** @param {string} agentId @param {"nap"|"deep"|"long"|"imaginative"} mode */
   trigger(agentId, mode) {
     const runtime = this.runtime,
       role = runtime.agent(agentId),
@@ -218,7 +218,7 @@ export class DreamRunner {
     };
     signal?.throwIfAborted();
     current();
-    if (mode !== "nap" && mode !== "deep" && mode !== "imaginative")
+    if (!["nap", "deep", "long", "imaginative"].includes(mode))
       throw Error("DREAM_MODE_MISMATCH");
     if (this.busy(agentId)) throw Error("DREAM_ALREADY_RUNNING");
     if (idempotencyKey) {

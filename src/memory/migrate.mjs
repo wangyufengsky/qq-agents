@@ -1,5 +1,6 @@
 // @ts-check
 import { DREAM_TABLES, DREAM_PORTABLE_CURSOR } from "../dream/schema.mjs";
+import { reconcileDreamPurges } from "../dream/purge.mjs";
 import { socialSafeExportRow } from "./protection.mjs";
 import { QQDraftStore } from "./qq-drafts.mjs";
 import { withoutClosenessCache } from "../core/closeness.mjs";
@@ -347,6 +348,7 @@ export function restoreExport(memory, data) {
           seqs.set(row.seq, Number(result.lastInsertRowid));
       }
     }
+    reconcileDreamPurges(memory.db, memory.agentId);
     if (
       memory.db
         .prepare(

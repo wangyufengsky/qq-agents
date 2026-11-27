@@ -103,6 +103,34 @@ export async function dreamLag(runtime, agentId, minimum = Infinity) {
   return result;
 }
 
+/** @param {any} runtime @param {any} role @param {number} now @param {boolean} idle */
+function longOpportunity(runtime, role, now, idle) {
+  const db = runtime.memory.db;
+  const active = prepared(
+    db,
+    "SELECT count(*) AS total, min(created_at) AS earliest FROM cognitions WHERE agent_id=? AND status='active'",
+  ).get(role.id);
+  const count = Number(active?.total);
+  if (!count) return null;
+  const success = prepared(
+    db,
+    `SELECT snapshot_version,changes_count,finished_at FROM dream_runs
+    WHERE agent_id=? AND mode='long' AND status='COMMITTED' ORDER BY finished_at DESC,rowid DESC LIMIT 1`,
+  ).get(role.id);
+  if (count > role.dream.cognitive.longCognitionThreshold) {
+    const { version } = checkpoint(db, role.id);
+    const observedVersion =
+      success &&
+      Number(success.snapshot_version) +
+        Number(Number(success.changes_count) > 0);
+    if (observedVersion !== version) return /** @type {const} */ ("threshold");
+  }
+  if (!idle || !role.dream.cognitive.longWeekly) return null;
+  const since = Date.parse(String(success?.finished_at ?? active?.earliest));
+  if (now - since >= 7 * 24 * 60 * minute) return /** @type {const} */ ("idle");
+  return null;
+}
+
 /** @param {any} runtime @param {any} role */
 export function dreamPaused(runtime, role) {
   return runtime.memory.bind(role.id).state("@dream").paused === true;
@@ -190,6 +218,7 @@ export class DreamScheduler {
   async scan(now) {
     const runtime = this.runtime;
     const opportunities = [];
+    const longs = [];
     for (const role of runtime.config.agents) {
       if (!this.available(role)) continue;
       const daily = dreamDaily(runtime, role);
@@ -209,12 +238,6 @@ export class DreamScheduler {
           (rhythm.state === "disabled" &&
             now - lastActivity >=
               Math.max(tenMinutes, role.dream.cognitive.napIdleMs)));
-      if (
-        !idle &&
-        !deep &&
-        !(role.dream.imaginative.enabled && daily.lastDeepId)
-      )
-        continue;
       const lag =
         cognitive && (idle || deep)
           ? await dreamLag(runtime, role.id, role.dream.cognitive.napMinEvents)
@@ -249,9 +272,29 @@ export class DreamScheduler {
         void runtime.dreams
           .run(role.id, { mode: "nap", trigger: "idle" })
           .catch((/** @type {unknown} */ error) => this.report(error, role.id));
-      } else if (role.dream.imaginative.enabled) {
-        opportunities.push({ role, idle, lastActivity });
+      } else {
+        const trigger = cognitive
+          ? longOpportunity(runtime, role, now, idle)
+          : null;
+        if (trigger) longs.push({ role, trigger });
+        else if (role.dream.imaginative.enabled && (idle || daily.lastDeepId))
+          opportunities.push({ role, idle, lastActivity });
       }
+    }
+
+    // Small and deep cognitive batches have priority over long consolidation.
+    for (const { role, trigger } of longs) {
+      if (
+        !runtime.dreams.backgroundSlot ||
+        runtime.closed ||
+        runtime.maintenance.active ||
+        !runtime.config.agents.includes(role) ||
+        !this.available(role)
+      )
+        continue;
+      void runtime.dreams
+        .run(role.id, { mode: "long", trigger })
+        .catch((/** @type {unknown} */ error) => this.report(error, role.id));
     }
 
     // Reserve cognitive work first across roles, regardless of configuration order.

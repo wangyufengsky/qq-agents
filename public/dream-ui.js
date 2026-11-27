@@ -110,6 +110,7 @@ async function renderDreams() {
       <div class="card-actions"><button type="button" id="dream-refresh">刷新</button><button type="button" id="dream-pause">${data.paused ? "恢复梦境" : "暂停梦境"}</button>
       <button type="button" data-dream-run="nap" ${!data.cognitive.enabled || blocker ? "disabled" : ""}>立即小憩</button>
       <button type="button" data-dream-run="deep" ${!data.cognitive.enabled || blocker ? "disabled" : ""}>立即深度睡眠</button>
+      <button type="button" data-dream-run="long" ${!data.cognitive.enabled || blocker ? "disabled" : ""}>立即做长梦</button>
       <button type="button" data-dream-run="imaginative" ${!data.imaginative.enabled || imaginativeBlocker ? "disabled" : ""}>立即做幻想梦</button></div>`;
     $("#dream-refresh").onclick = () =>
       action(() =>

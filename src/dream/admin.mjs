@@ -192,7 +192,6 @@ export async function dreamAdmin(runtime, method, url, readBody) {
           mode: z.enum(["nap", "deep", "long", "imaginative"]),
         })
         .parse(await readBody(8192));
-      if (mode === "long") throw Error("DREAM_MODE_MISMATCH");
       return send(runtime.dreams.trigger(agentId, mode), 202);
     }
     return send({ error: "NOT_FOUND" }, 404);

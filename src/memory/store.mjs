@@ -1,3 +1,4 @@
+import { initializeDreamPurge, reconcileDreamPurges } from "../dream/purge.mjs";
 import {
   DREAM_SCHEMA_VERSION,
   exportDreamCheckpoint,
@@ -228,6 +229,17 @@ export class MemoryStore {
       this.due = new ConversationDue(this.db);
       this.transaction(() => {
         this.due.initialize();
+        const hadDreamPurge = this.db
+          .prepare(
+            "SELECT 1 FROM sqlite_schema WHERE type='trigger' AND name='dream_privacy_purge_apply'",
+          )
+          .get();
+        initializeDreamPurge(this.db);
+        if (!hadDreamPurge)
+          for (const { agent_id } of this.db
+            .prepare("SELECT DISTINCT agent_id FROM cognition_evidence")
+            .all())
+            reconcileDreamPurges(this.db, agent_id);
         initializeGardenTables(this.db);
         initializeStoryTables(this.db);
       });
