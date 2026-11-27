@@ -329,12 +329,14 @@ test("wind chime previews queued seeds without sending the follow-up early", (t)
     const sun = settings.weather.entries.sun;
     sun.weight = 1;
     sun.mode = "any";
-    sun.conditions = ["moonflower", "strawberry", "tomato"].map((cropId) => ({
-      field: "seed",
-      cropId,
-      op: "gt",
-      value: 0,
-    }));
+    sun.conditions = ["moonflower", "strawberry", "sweet-corn", "tomato"].map(
+      (cropId) => ({
+        field: "seed",
+        cropId,
+        op: "gt",
+        value: 0,
+      }),
+    );
   });
   const plantId = f.plant(1, "strawberry").plantId;
   f.advance(8);

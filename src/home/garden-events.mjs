@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
+import { GardenTables } from "./garden-tables.mjs";
 import { GardenExplorers } from "./garden-explorers.mjs";
 import { GardenStories } from "./garden-stories.mjs";
 import { gardenPlantRef } from "./garden-journal.mjs";
@@ -37,6 +38,7 @@ const trial = weatherTrialInput.extend({
  * {kind:"nuisance",effect:Extract<EventEffect,{kind:"nuisance"}>,startedAt:number,handledAt?:number} |
  * {kind:"weather_flip",effect:Extract<EventEffect,{kind:"weather_flip"}>,targetWeather:import("./garden-weather.mjs").Weather,forecast:import("./garden-weather.mjs").Weather} |
  * {kind:"harvest_bonus",effect:Extract<EventEffect,{kind:"harvest_bonus"}>,progress?:{current:number,required:number}} |
+ * {kind:"table",effect:Extract<EventEffect,{kind:"table"}>,game?:any,description?:string} |
  * {kind:"explorer",effect:Extract<EventEffect,{kind:"explorer"}>,game?:any,description?:string} |
  * {kind:"choice",effect:Extract<EventEffect,{kind:"choice"}>} |
  * {kind:"story",effect:Extract<EventEffect,{kind:"story"}>,target?:{plot:number,plantId:string,cropName:string}} |
@@ -49,6 +51,7 @@ export class GardenEvents {
     this.journal = journal;
     this.stories = new GardenStories(db, journal);
     this.explorers = new GardenExplorers(db, journal);
+    this.tables = new GardenTables(db, journal);
   }
 
   /** @param {number|undefined} day @returns {GardenEvent|null} */
@@ -67,7 +70,8 @@ export class GardenEvents {
       .all()
       .map((row) => {
         const value = JSON.parse(row.value);
-        if (value.kind !== "explorer") return { day: row.day, ...value };
+        if (value.kind !== "explorer" && value.kind !== "table")
+          return { day: row.day, ...value };
         const { game: _game, ...visible } = value;
         return { day: row.day, ...visible };
       });
@@ -82,6 +86,7 @@ export class GardenEvents {
   draw(state, ctx, weather, seed, day) {
     const entry = drawGardenEvent(state.settings, ctx, weather, seed, day);
     if (entry?.kind === "explorer") this.explorers.start(entry, state);
+    if (entry?.kind === "table") this.tables.start(entry);
     if (entry)
       this.journal.record({
         type: entry.kind === "visitor" ? "visitor" : "event",
@@ -206,6 +211,7 @@ export class GardenEvents {
   view(day, state, claimed) {
     const entry = claimed ?? this.get(day);
     if (entry?.kind === "explorer") return this.explorers.view(entry, state);
+    if (entry?.kind === "table") return this.tables.view(entry);
     if (
       entry?.kind === "story" &&
       entry.effect.story === "migratory_bird" &&
@@ -396,7 +402,10 @@ export class GardenEvents {
         this.stories.cancel(entry.id, now);
     }
     if (!entry || entry.status !== "open") return;
-    let outcome = entry.kind === "explorer" ? entry.outcome : undefined;
+    let outcome =
+      entry.kind === "explorer" || entry.kind === "table"
+        ? entry.outcome
+        : undefined;
     if (entry.kind === "thief") {
       const lot = this.db
         .prepare(
@@ -527,6 +536,20 @@ export class GardenEvents {
     if (action.kind === "choose_event") {
       const sourceDay = Number(action.eventId.split(":")[0]);
       const project = sourceDay < day ? this.get(sourceDay) : entry;
+      if (
+        project?.id === action.eventId &&
+        project.kind === "table" &&
+        (sourceDay === day || this.tables.isActive(project))
+      ) {
+        if (!owner) throw Error("GARDEN_ROLE_UNAVAILABLE");
+        const outcome = this.tables.perform(project, state, action, owner, now);
+        this.update(sourceDay, project);
+        return { eventId: project.id, outcome };
+      }
+      if (
+        ["text", "itemId", "cropId"].some((key) => Object.hasOwn(action, key))
+      )
+        throw Error("GARDEN_EVENT_CHOICE_INVALID");
       if (
         project?.id === action.eventId &&
         project.kind === "explorer" &&

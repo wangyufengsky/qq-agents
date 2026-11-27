@@ -214,6 +214,15 @@ export function initializeGardenTables(db) {
       .get()
   )
     db.exec("ALTER TABLE garden_harvests ADD COLUMN plant_id TEXT");
+  if (
+    !db
+      .prepare(
+        "SELECT 1 FROM pragma_table_info('garden_harvests') WHERE name='harvest_meta'",
+      )
+      .get()
+  )
+    db.exec("ALTER TABLE garden_harvests ADD COLUMN harvest_meta TEXT");
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS garden_explorer_comparisons (
       id TEXT PRIMARY KEY,
@@ -224,5 +233,22 @@ export function initializeGardenTables(db) {
     CREATE INDEX IF NOT EXISTS garden_explorer_due ON garden_explorer_comparisons(trigger_clock) WHERE result IS NULL;
     CREATE INDEX IF NOT EXISTS garden_doorstep_active ON garden_events(day)
       WHERE json_extract(value,'$.effect.story')='door_peas' AND json_extract(value,'$.game.packet.taken')=0;
+  `);
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS garden_table_followups (
+      id TEXT PRIMARY KEY,
+      trigger_day INTEGER NOT NULL,
+      kind TEXT NOT NULL,
+      result TEXT
+    );
+    CREATE INDEX IF NOT EXISTS garden_table_due ON garden_table_followups(trigger_day) WHERE result IS NULL;
+    CREATE TABLE IF NOT EXISTS garden_table_loans (
+      item_id TEXT PRIMARY KEY REFERENCES garden_items(id),
+      event_id TEXT NOT NULL,
+      owner TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS garden_table_loan_event ON garden_table_loans(event_id);
+    CREATE INDEX IF NOT EXISTS garden_table_active_projects ON garden_events(day)
+      WHERE json_extract(value,'$.kind')='table' AND json_extract(value,'$.game.active')=1;
   `);
 }

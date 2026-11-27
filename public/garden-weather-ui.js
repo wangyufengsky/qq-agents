@@ -287,6 +287,7 @@ const gardenEventKinds = {
   choice: "花园抉择",
   story: "花园小景",
   explorer: "花园探索",
+  table: "花园小聚",
 };
 const gardenEventCapacity = 78;
 const gardenStoryKinds = {
@@ -308,6 +309,18 @@ const gardenStoryKinds = {
     leaf_identity: "辨叶",
     windmill: "小风车挪位",
     door_peas: "门口留豆",
+  },
+  table: {
+    perilla_cloth: "只印了一半的方巾",
+    popcorn: "玉米爆出第一朵花",
+    pumpkin_face: "南瓜刻脸铺",
+    jam_spoon: "留一勺果酱",
+    bench: "一把不够长的长椅",
+    mint_ice: "薄荷冰块慢慢化",
+    nest_edge: "织巢挑材料",
+    menu: "写错名字的菜牌",
+    color_swap: "双碟色卡",
+    window_lamp: "借灯窗边",
   },
   story: {
     migratory_bird: "候鸟借宿",
@@ -507,6 +520,7 @@ function gardenEventSettingsMarkup(
   presets = [],
 ) {
   const ids = Object.keys(pool.entries);
+  const capacity = Math.max(gardenEventCapacity, ids.length);
   const names = Object.fromEntries(
     ids.map((id) => [id, pool.entries[id].name]),
   );
@@ -522,7 +536,7 @@ function gardenEventSettingsMarkup(
     ${gardenWeatherSelect("eventParent", "复制事件", options, "")}
     </div>
     <button type="button" class="ghost" data-add-event-entry>新增事件</button>
-    <details><summary>补入新版预设</summary><p class="hint">选择缺少的条目后加入下方表单，保存设置后从下一花园日起生效。每池最多 ${gardenEventCapacity} 条。</p>
+    <details><summary>补入新版预设</summary><p class="hint">选择缺少的条目后加入下方表单，保存设置后从下一花园日起生效。每池最多 ${capacity} 条。</p>
     ${presets
       .map(({ id, entry, available }) => {
         const exists = Object.hasOwn(pool.entries, id);
@@ -530,7 +544,7 @@ function gardenEventSettingsMarkup(
       })
       .join("")}
     <button type="button" class="ghost" data-import-event-presets>把选中预设加入表单</button></details>
-    <div data-event-entries>${ids.map((id) => gardenEventEntry(id, pool.entries[id], Object.keys(weather.entries), crops, catalog)).join("")}</div>
+    <div data-event-entries data-capacity="${capacity}">${ids.map((id) => gardenEventEntry(id, pool.entries[id], Object.keys(weather.entries), crops, catalog)).join("")}</div>
     `,
     { summary: "保存后次日生效" },
   );
@@ -632,6 +646,9 @@ function gardenEventEdit(event, show, catalog) {
   const node = event.target;
   const form = node.closest("[data-garden-settings]");
   const row = node.closest("[data-event-entry]");
+  const capacity =
+    Number(form?.querySelector("[data-event-entries]")?.dataset.capacity) ||
+    gardenEventCapacity;
   const button = node.closest("button");
   if (
     !form ||
@@ -671,8 +688,8 @@ function gardenEventEdit(event, show, catalog) {
     const selected = Array.from(
       form.querySelectorAll("[data-event-preset]:checked:not(:disabled)"),
     ).filter((e) => !ids.has(e.dataset.eventPreset));
-    if (ids.size + selected.length > gardenEventCapacity) {
-      show(`超过 ${gardenEventCapacity} 条上限，请减少选中的预设。`);
+    if (ids.size + selected.length > capacity) {
+      show(`超过 ${capacity} 条上限，请减少选中的预设。`);
       return true;
     }
     for (const input of selected) {
@@ -757,9 +774,9 @@ function gardenEventEdit(event, show, catalog) {
   if (
     !/^[a-z][a-z0-9-]{0,39}$/.test(id) ||
     Object.hasOwn(existing, id) ||
-    Object.keys(existing).length >= gardenEventCapacity
+    Object.keys(existing).length >= capacity
   ) {
-    show(`请填写未占用的小写事件 ID，每池最多 ${gardenEventCapacity} 个条目。`);
+    show(`请填写未占用的小写事件 ID，每池最多 ${capacity} 个条目。`);
     return true;
   }
   if (!form.reportValidity()) return true;
@@ -824,6 +841,7 @@ async function gardenRunEventTrial(form) {
     no_seeds: "没有可交易库存",
     weather_unavailable: "实况天气不可用",
     story_unavailable: "当前花园条件无法触发",
+    table_unavailable: "当前花园条件无法触发",
     explorer_unavailable: "当前花园里没有需要的探索条件",
     full_moon: "满月事件优先",
     zero_weight: "权重为零",

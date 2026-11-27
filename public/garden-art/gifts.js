@@ -65,6 +65,54 @@ export const gardenGifts = {
     usable: false,
     eventOnly: true,
   },
+  "craft-perilla-print": {
+    name: "晚霞紫苏叶拓",
+    price: 0,
+    usable: false,
+    eventOnly: true,
+  },
+  "craft-roasted-corn": {
+    name: "烤奶油甜玉米",
+    price: 0,
+    usable: true,
+    eventOnly: true,
+  },
+  "craft-corn-rattle": {
+    name: "玉米沙锤",
+    price: 0,
+    usable: false,
+    eventOnly: true,
+  },
+  "craft-pumpkin-lantern": {
+    name: "手刻南瓜灯",
+    price: 0,
+    usable: false,
+    eventOnly: true,
+  },
+  "perilla-half-cloth": {
+    name: "紫苏半块方巾",
+    price: 0,
+    usable: false,
+    eventOnly: true,
+  },
+  "perilla-printed-cloth": {
+    name: "紫苏对印方巾",
+    price: 0,
+    usable: false,
+    eventOnly: true,
+  },
+  "pumpkin-lantern": {
+    name: "南瓜灯",
+    price: 0,
+    usable: false,
+    eventOnly: true,
+  },
+  "mixed-color-swatches": {
+    name: "合色样卡",
+    price: 0,
+    usable: false,
+    eventOnly: true,
+  },
   "garden-sketch-card": {
     name: "花园速写画",
     price: 0,
@@ -85,7 +133,7 @@ export function isGardenMerchantGift(id) {
   return Object.hasOwn(gardenGifts, id) && !("eventOnly" in gift);
 }
 
-/** @typedef {{ingredients: {cropName:string,quality:string,maturedDay?:number,carers?:string[],leafShape?:string}[]}} GardenCraftOrigin */
+/** @typedef {{ingredients: {cropName:string,quality:string,maturedDay?:number,carers?:string[],leafShape?:string,ear?:number,harvestStage?:"tender"|"dry"|"hard",leafFront?:string,leafBack?:string,color?:string}[],makers?:string[],makerRefs?:{kind:string,id:string,name:string}[],mothMark?:boolean}} GardenCraftOrigin */
 /** @param {GardenCraftOrigin|undefined|null} meta */
 export function gardenCraftOrigin(meta) {
   if (!meta?.ingredients?.length) return "";
@@ -94,7 +142,7 @@ export function gardenCraftOrigin(meta) {
     fine: "优良",
     perfect: "完美",
   });
-  return `原料 · ${meta.ingredients
+  const materials = `原料 · ${meta.ingredients
     .map((item) => {
       const when =
         item.maturedDay == null ? "" : `第 ${item.maturedDay} 天成熟的`;
@@ -102,8 +150,30 @@ export function gardenCraftOrigin(meta) {
       const who = item.carers?.length
         ? `（${item.carers.join("、")}照料）`
         : "";
-      const shape = item.leafShape ? `（${item.leafShape}）` : "";
+      const descriptors = [
+        item.leafShape,
+        item.color ? `色样${item.color}` : "",
+        item.leafFront ? `叶面${item.leafFront}` : "",
+        item.leafBack ? `叶背${item.leafBack}` : "",
+        item.ear ? `第 ${item.ear} 穗` : "",
+        item.harvestStage &&
+          { tender: "鲜嫩", dry: "干熟", hard: "硬皮" }[item.harvestStage],
+      ].filter(Boolean);
+      const shape = descriptors.length ? `（${descriptors.join("、")}）` : "";
       return `${when}${quality ? quality + "品质的" : ""}${item.cropName}${shape}${who}`;
     })
     .join("；")}`;
+  const refs = meta.makerRefs ?? [];
+  const signatures = refs.length
+    ? refs.map(({ name, id }) =>
+        refs.filter((ref) => ref.name === name).length > 1
+          ? `${name}（${id}）`
+          : name,
+      )
+    : (meta.makers ?? []);
+  return [
+    materials,
+    ...(signatures.length ? [`署名 · ${signatures.join("、")}`] : []),
+    ...(meta.mothMark ? ["窗边留下一道蛾灰印"] : []),
+  ].join(" · ");
 }

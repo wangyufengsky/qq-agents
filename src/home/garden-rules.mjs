@@ -3,7 +3,8 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
   defaultEvents,
-  eventPool,
+  eventPoolStructure,
+  gardenEventCapacity,
   validEventReferences,
 } from "./garden-event-rules.mjs";
 import { giftBudgetLimits } from "./garden-items.mjs";
@@ -53,7 +54,7 @@ const cropSchema = z.strictObject({
 export const careMode = z.enum(["classic", "gentle"]);
 export const careScope = z.enum(["future", "growing"]);
 
-export const gardenSettings = z
+const gardenSettingsStructure = z
   .strictObject({
     enabled: z.boolean(),
     roles: z
@@ -80,7 +81,7 @@ export const gardenSettings = z
     perfectMultiplier: z.number().min(1).max(10),
     crops: z.record(cropId, cropSchema),
     weather: weatherPool.prefault(defaultWeather),
-    events: eventPool.prefault(defaultEvents),
+    events: eventPoolStructure.prefault(defaultEvents),
   })
   .refine(
     (settings) =>
@@ -103,6 +104,16 @@ export const gardenSettings = z
   )
   .refine(validEventReferences);
 
+/** A full custom pool can grow during an edition upgrade. Keep every saved entry editable.
+ * @param {number} existingCount */
+export const gardenSettingsForPool = (existingCount) =>
+  gardenSettingsStructure.refine(
+    ({ events }) =>
+      Object.keys(events.entries).length <=
+      Math.max(gardenEventCapacity, existingCount),
+  );
+export const gardenSettings = gardenSettingsForPool(0);
+
 const initialCrops = /** @type {const} */ ([
   ["clover", "野生三叶草", 0, 24, 15, "neutral", 0, 25],
   ["radish", "樱桃小萝卜", 30, 36, 25, "neutral", 1, 85],
@@ -124,6 +135,42 @@ export const LAMBS_EAR = "lambs-ear";
 const hydrangea = "hydrangea";
 
 const expandedCrops = /** @type {const} */ ([
+  [
+    "perilla",
+    "晚霞紫苏",
+    "叶正面有醒目的叶脉，翻过来能看见晚霞般的色印。",
+    true,
+    62,
+    44,
+    24,
+    "shade",
+    1,
+    155,
+  ],
+  [
+    "sweet-corn",
+    "奶油甜玉米",
+    "一株先后长两穗。嫩穗可烤来分享，第二穗可在成熟后留 12 花园小时，干熟后做沙锤。",
+    true,
+    80,
+    48,
+    32,
+    "sun",
+    1,
+    155,
+  ],
+  [
+    "pocket-pumpkin",
+    "口袋南瓜",
+    "嫩瓜可以直接摘。成熟后再留 24 花园小时，硬皮可以刻灯。",
+    true,
+    72,
+    50,
+    26,
+    "sun",
+    1,
+    205,
+  ],
   [
     MORNING_GLORY,
     "早安牵牛",
@@ -266,7 +313,39 @@ export function lambsEarLeafShape(plant) {
   ];
 }
 
-/** @param {Pick<Plant,"id"|"cropId"|"status"|"podPopped">} plant @param {number} clock
+export const perillaVariants = {
+  "leaf-veins": "正面叶脉拓",
+  "sunset-print": "背面晚霞印",
+};
+
+/** @param {Pick<Plant,"id">} plant */
+export function perillaLeafPrint(plant) {
+  const code = createHash("sha256").update(`perilla:${plant.id}`).digest()[0];
+  return {
+    leafFront: ["羽状叶脉", "叉状细脉", "梳状长脉"][code % 3],
+    leafBack: ["暮紫色印", "玫霞色印", "霞橙色印"][Math.floor(code / 3) % 3],
+  };
+}
+
+/** @typedef {{harvestStage?:"tender"|"dry"|"hard",ear?:number,leafFront?:string,leafBack?:string}} HarvestMeta */
+/** @param {Pick<Plant,"id"|"cropId"|"status"|"maturedAt"|"harvestCount">} plant @param {number} clock @returns {HarvestMeta} */
+export function gardenHarvestMeta(plant, clock) {
+  if (plant.cropId === "perilla") return perillaLeafPrint(plant);
+  if (plant.status !== "mature") return {};
+  const elapsed = plant.maturedAt === undefined ? 0 : clock - plant.maturedAt;
+  if (plant.cropId === "sweet-corn") {
+    const ear = (plant.harvestCount ?? 0) + 1;
+    return {
+      ear,
+      harvestStage: ear === 2 && elapsed >= 12 * HOUR ? "dry" : "tender",
+    };
+  }
+  if (plant.cropId === "pocket-pumpkin")
+    return { harvestStage: elapsed >= DAY ? "hard" : "tender" };
+  return {};
+}
+
+/** @param {Pick<Plant,"id"|"cropId"|"status"|"podPopped"|"maturedAt"|"harvestCount">} plant @param {number} clock
  * @param {import("./garden-weather.mjs").Weather["kind"]} weather @param {boolean} sheltered */
 export function explorerPlantView(plant, clock, weather, sheltered) {
   if (plant.status === "withered") return undefined;
@@ -292,6 +371,44 @@ export function explorerPlantView(plant, clock, weather, sheltered) {
       text: silverBeads ? "绒叶挂着细雨银珠" : leafShape,
     };
   }
+  if (plant.cropId === "perilla") {
+    const { leafFront, leafBack } = perillaLeafPrint(plant);
+    return {
+      leafFront,
+      leafBack,
+      text: `正面是${leafFront}，背面是${leafBack}`,
+    };
+  }
+  if (plant.cropId === "sweet-corn") {
+    const ear = (plant.harvestCount ?? 0) + 1;
+    const { harvestStage } = gardenHarvestMeta(plant, clock);
+    return {
+      ear,
+      harvestStage,
+      text:
+        harvestStage === "dry"
+          ? "第二穗已经干熟，可以做沙锤"
+          : harvestStage === "tender"
+            ? ear === 2
+              ? "第二穗正嫩，可收下烤食，也可再留一会儿等它干熟"
+              : "第一穗正嫩，可以摘下烤食"
+            : ear === 2
+              ? "第二穗正在长"
+              : "第一穗正在长",
+    };
+  }
+  if (plant.cropId === "pocket-pumpkin") {
+    const { harvestStage } = gardenHarvestMeta(plant, clock);
+    return {
+      harvestStage,
+      text:
+        harvestStage === "hard"
+          ? "瓜皮已经变硬，可以刻灯"
+          : harvestStage === "tender"
+            ? "嫩瓜可以摘，也可以留着养成适合刻灯的硬皮瓜"
+            : "小瓜正在长",
+    };
+  }
   return undefined;
 }
 
@@ -308,6 +425,9 @@ export function gardenCropTraits(id, crop) {
     ...(id === RATTLE_PEA ? ["熟荚有响声"] : []),
     ...(id === BALSAM ? ["果荚弹籽"] : []),
     ...(id === LAMBS_EAR ? ["雨珠绒叶"] : []),
+    ...(id === "perilla" ? ["双面叶拓"] : []),
+    ...(id === "sweet-corn" ? ["第二穗可留至干熟"] : []),
+    ...(id === "pocket-pumpkin" ? ["可留至硬皮"] : []),
   ];
 }
 
@@ -424,6 +544,7 @@ export function withExpandedCrops(crops) {
       yield: 1,
       floodDays: 2,
       ...(id === "tomato" && { maxHarvests: 3 }),
+      ...(id === "sweet-corn" && { maxHarvests: 2 }),
       ...(id === "succulent" && { rainSensitive: true }),
     };
   }

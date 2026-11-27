@@ -24,6 +24,9 @@ const cropStages = /** @type {Record<string, string[]>} */ ({
   "rattle-pea": ["发芽", "结荚", "豌豆荚成熟"],
   balsam: ["发芽", "现蕾", "弹籽荚成熟"],
   "lambs-ear": ["发芽", "展叶", "绒叶长成"],
+  perilla: ["发芽", "舒叶", "叶片可采"],
+  "sweet-corn": ["发芽", "抽穗", "玉米可收"],
+  "pocket-pumpkin": ["发芽", "坐果", "南瓜可收"],
 });
 
 /** @param {{status:string,growth:number,crop:{hours:number}}|null|undefined} plant */

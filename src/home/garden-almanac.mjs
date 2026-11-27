@@ -1,5 +1,5 @@
 // @ts-check
-import { DAY, gardenVariants } from "./garden-rules.mjs";
+import { DAY, gardenVariants, perillaVariants } from "./garden-rules.mjs";
 
 /** @typedef {import("./garden-service.mjs").State} State */
 /** @typedef {import("./garden-rules.mjs").Quality} Quality */
@@ -14,7 +14,9 @@ const knownDay = (clock) =>
   typeof clock === "number" ? Math.floor(clock / DAY) + 1 : null;
 /** @param {string} id */
 const variantName = (id) =>
-  gardenVariants[/** @type {keyof typeof gardenVariants} */ (id)] ?? id;
+  gardenVariants[/** @type {keyof typeof gardenVariants} */ (id)] ??
+  perillaVariants[/** @type {keyof typeof perillaVariants} */ (id)] ??
+  id;
 
 export class GardenAlmanac {
   /** @param {import("node:sqlite").DatabaseSync} db @param {import("./garden-journal.mjs").GardenJournal} journal */
@@ -106,13 +108,16 @@ export class GardenAlmanac {
     for (const fact of facts) {
       const [plant] = JSON.parse(String(fact.plants));
       if (!plant?.plantId) continue;
-      const { cropId, variant } = JSON.parse(String(fact.detail));
+      const { cropId, variant, variants } = JSON.parse(String(fact.detail));
       const id = cropId ?? plant.cropId;
       const events = factsByPlant.get(plant.plantId) ?? [];
       events.push({ cropId: id, clock: fact.clock, variant });
       factsByPlant.set(plant.plantId, events);
       const record = rowFor(id, fact.clock);
       if (record && typeof variant === "string") record.variants.add(variant);
+      if (record && Array.isArray(variants))
+        for (const value of variants)
+          if (typeof value === "string") record.variants.add(value);
     }
     const unlinkedCrops = new Set();
     for (const lot of this.db
@@ -210,7 +215,7 @@ export class GardenAlmanac {
   }
 
   /** @param {State} state @param {number} now @param {string} cropId @param {ReturnType<typeof import("./garden-journal.mjs").gardenPlantRef>[]} plants
-   * @param {{kind:"plant"}|{kind:"harvest",quality:Quality,variant?:string}|{kind:"discover"}} change */
+   * @param {{kind:"plant"}|{kind:"harvest",quality:Quality,variant?:string,variants?:string[]}|{kind:"discover"}} change */
   record(state, now, cropId, plants, change) {
     const harvest = change.kind === "harvest" ? change : undefined;
     const existing = this.db
@@ -223,11 +228,13 @@ export class GardenAlmanac {
     const variants = new Set(
       existing ? JSON.parse(String(existing.variants)) : [],
     );
-    const newVariant =
-      harvest?.variant && !variants.has(harvest.variant)
-        ? harvest.variant
-        : undefined;
-    if (newVariant) variants.add(newVariant);
+    const newVariants = [
+      ...new Set([
+        ...(harvest?.variant ? [harvest.variant] : []),
+        ...(harvest?.variants ?? []),
+      ]),
+    ].filter((id) => !variants.has(id));
+    for (const id of newVariants) variants.add(id);
     this.write(
       {
         cropId,
@@ -249,7 +256,16 @@ export class GardenAlmanac {
       },
       now,
     );
-    if (existing && !newVariant) return;
+    const added = existing ? newVariants : [undefined, ...newVariants];
+    return added.length
+      ? added.map((variant) =>
+          this.recordDiscovery(state, cropId, plants, variant),
+        )
+      : undefined;
+  }
+
+  /** @param {State} state @param {string} cropId @param {ReturnType<typeof import("./garden-journal.mjs").gardenPlantRef>[]} plants @param {string} [newVariant] */
+  recordDiscovery(state, cropId, plants, newVariant) {
     const name = state.settings.crops[cropId].name;
     const title = `图鉴点亮：${newVariant ? variantName(newVariant) : name}`;
     const detail = newVariant
