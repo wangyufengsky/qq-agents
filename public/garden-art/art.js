@@ -20,6 +20,9 @@ const explorerCrops = new Set([
   "rattle-pea",
   "balsam",
   "lambs-ear",
+  "perilla",
+  "sweet-corn",
+  "pocket-pumpkin",
 ]);
 const stages = ["seedling", "growing", "mature", "withered"];
 const weatherKinds = ["sun", "cloud", "drizzle", "storm"];

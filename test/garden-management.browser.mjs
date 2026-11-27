@@ -730,7 +730,7 @@ test("the management garden builds facilities, crafts with two selected species 
   const recipe = (id) => page.locator(`[data-garden-recipe="${id}"]`);
   const jam = recipe("craft-strawberry-jam");
   const bouquet = recipe("craft-flower-bouquet");
-  assert.equal(await page.locator("[data-garden-recipe]").count(), 7);
+  assert.equal(await page.locator("[data-garden-recipe]").count(), 11);
   await bouquet.getByText("建好干花晾晒架后解锁。", { exact: true }).waitFor();
   const beforeJam = currentBalance();
   await jam.getByRole("button", { name: "制作", exact: true }).click();

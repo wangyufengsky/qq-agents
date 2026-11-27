@@ -224,6 +224,8 @@ export function marketHarvests(state) {
       cropId: String(harvest.crop_id),
       quality,
       quantity: Number(harvest.quantity),
+      ...(typeof harvest.harvest_meta === "string" &&
+        JSON.parse(harvest.harvest_meta)),
       saleRate:
         state.settings.crops[String(harvest.crop_id)].salePrice * multiplier,
     };
@@ -343,8 +345,8 @@ export function adminGardenView(runtime, collectVisitor = false) {
         giftPerson(runtime, instanceAdmin),
       ),
     ],
-    gardenProjects: garden.calendar.events.explorers.projects(
-      state.day,
+    gardenProjects: gardenProjects(
+      garden,
       state,
       giftPerson(runtime, instanceAdmin),
     ),
@@ -488,11 +490,7 @@ export function subjectGardenView(
     boardNotes: state.boardNotes,
     rumors: state.rumors,
     followups: state.followups,
-    gardenProjects: garden.calendar.events.explorers.projects(
-      state.day,
-      state,
-      owner,
-    ),
+    gardenProjects: gardenProjects(garden, state, owner),
     almanacSummary: state.almanacSummary,
     ...gardenWorkshop(runtime, state),
     event: event
@@ -763,13 +761,21 @@ export function recordGardenObservation(runtime, roleId, moment, now) {
 /** @param {import("./garden-service.mjs").GardenService} garden @param {GardenState} state
  * @param {import("./garden-items.mjs").Owner} [owner] */
 function currentExplorerActions(garden, state, owner) {
-  return state.event?.kind === "explorer"
-    ? garden.calendar.events.explorers.actions(
-        garden.calendar.events.get(state.day),
-        state,
-        owner,
-      )
-    : [];
+  const event = garden.calendar.events.get(state.day);
+  if (event?.kind === "table")
+    return garden.calendar.events.tables.actions(event, state, owner);
+  if (event?.kind === "explorer")
+    return garden.calendar.events.explorers.actions(event, state, owner);
+  return [];
+}
+
+/** @param {import("./garden-service.mjs").GardenService} garden @param {GardenState} state
+ * @param {import("./garden-items.mjs").Owner} [owner] */
+function gardenProjects(garden, state, owner) {
+  return [
+    ...garden.calendar.events.explorers.projects(state.day, state, owner),
+    ...garden.calendar.events.tables.projects(state.day, state, owner),
+  ];
 }
 
 /** @param {GardenState} state */

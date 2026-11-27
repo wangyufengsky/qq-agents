@@ -916,6 +916,29 @@
   inset: 0 0 0 auto;
   transform: scaleX(-1);
 }
+.garden-ink-duo {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.garden-ink-duo span {
+  padding: 3px 6px;
+  background: #e4eddc;
+  border-radius: 4px;
+}
+.garden-ink-duo [data-leaf-color="purple"] {
+  background: #f0e7f2;
+}
+.garden-ink-duo [data-leaf-color="rose"] {
+  background: #f5e4e8;
+}
+.garden-ink-duo [data-leaf-color="orange"] {
+  background: #f8e8d9;
+}
+.garden-choice :is(select, input[type="text"]) {
+  width: 100%;
+  min-width: 0;
+}
 .garden-plot .garden-plot-condition {
   color: #526649;
   line-height: 1.2;

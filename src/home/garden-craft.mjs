@@ -5,10 +5,12 @@ import { gardenGifts } from "../../public/garden-art/gifts.js";
 /** @typedef {import("node:sqlite").DatabaseSync} Database */
 /** @typedef {import("./garden-service.mjs").State} State */
 /** @typedef {import("./garden-items.mjs").GiftContext} GiftContext */
-/** @typedef {{id:string,cropId:string,quality:string,plantId?:string,leafShape?:string}} Lot */
-/** @typedef {{cropId:string,cropName:string,quality:string,plantId?:string,maturedDay?:number,carers?:string[],leafShape?:string}} Ingredient */
-/** @typedef {{recipeId:string,ingredients:Ingredient[]}} CraftMeta */
-/** @typedef {{price:number,count:number,crops:string[],quality?:string,facility?:true,leaf?:true,requirements:string[]}} Recipe */
+/** @typedef {import("./garden-rules.mjs").HarvestMeta} HarvestMeta */
+/** @typedef {{id:string,cropId:string,quality:string,plantId?:string,leafShape?:string,meta?:HarvestMeta}} Lot */
+/** @typedef {{cropId:string,cropName:string,quality:string,plantId?:string,maturedDay?:number,carers?:string[],leafShape?:string} & HarvestMeta} Ingredient */
+/** @typedef {{kind:string,id:string,name:string}} CraftMaker */
+/** @typedef {{recipeId:string,ingredients:(Ingredient & {maker?:string,makerRef?:CraftMaker,color?:string})[],makers?:string[],makerRefs?:CraftMaker[],mothMark?:boolean}} CraftMeta */
+/** @typedef {{price:number,count:number,crops:string[],quality?:string,facility?:true,leaf?:true,stage?:HarvestMeta["harvestStage"],print?:true,requirements:string[]}} Recipe */
 
 const flowers = [
   "sunflower",
@@ -36,6 +38,34 @@ const recipes = {
     crops: ["lambs-ear"],
     leaf: true,
     requirements: ["1 份带完整绒叶的绒耳草收成"],
+  },
+  "craft-perilla-print": {
+    price: 10,
+    count: 1,
+    crops: ["perilla"],
+    print: true,
+    requirements: ["1 份保有双面印纹的晚霞紫苏"],
+  },
+  "craft-roasted-corn": {
+    price: 8,
+    count: 1,
+    crops: ["sweet-corn"],
+    stage: "tender",
+    requirements: ["1 份奶油甜玉米嫩穗"],
+  },
+  "craft-corn-rattle": {
+    price: 12,
+    count: 1,
+    crops: ["sweet-corn"],
+    stage: "dry",
+    requirements: ["1 份干熟的第二穗奶油甜玉米"],
+  },
+  "craft-pumpkin-lantern": {
+    price: 14,
+    count: 1,
+    crops: ["pocket-pumpkin"],
+    stage: "hard",
+    requirements: ["1 份适合雕刻的硬皮口袋南瓜"],
   },
   "craft-strawberry-jam": {
     price: 12,
@@ -79,7 +109,7 @@ export const gardenRecipeId = z.enum(
 function harvestLots(db) {
   return db
     .prepare(
-      `SELECT lot.id,lot.crop_id,lot.quality,lot.plant_id,
+      `SELECT lot.id,lot.crop_id,lot.quality,lot.plant_id,lot.harvest_meta,
        CASE WHEN lot.crop_id='lambs-ear' THEN (
          SELECT json_extract(fact.detail,'$.leafShape') FROM garden_facts fact
          WHERE fact.type='harvest' AND json_extract(fact.detail,'$.harvestId')=lot.id
@@ -92,6 +122,9 @@ function harvestLots(db) {
       cropId: String(row.crop_id),
       quality: String(row.quality),
       ...(row.plant_id && { plantId: String(row.plant_id) }),
+      ...(typeof row.harvest_meta === "string" && {
+        meta: /** @type {HarvestMeta} */ (JSON.parse(row.harvest_meta)),
+      }),
       ...(typeof row.leaf_shape === "string" && { leafShape: row.leaf_shape }),
     }));
 }
@@ -101,7 +134,9 @@ function accepts(recipe, lot) {
   return (
     recipe.crops.includes(lot.cropId) &&
     (!recipe.quality || lot.quality === recipe.quality) &&
-    (!recipe.leaf || !!lot.leafShape)
+    (!recipe.leaf || !!lot.leafShape) &&
+    (!recipe.stage || lot.meta?.harvestStage === recipe.stage) &&
+    (!recipe.print || !!(lot.meta?.leafFront && lot.meta.leafBack))
   );
 }
 
@@ -133,7 +168,7 @@ export function gardenCraftRecipes(db, hasRack) {
 
 /** @param {Database} db @param {State} state @param {Lot} lot @param {GiftContext} context */
 function provenance(db, state, lot, context) {
-  const { cropId, quality, plantId, leafShape } = lot;
+  const { cropId, quality, plantId, leafShape, meta } = lot;
   const cropName = state.settings.crops[cropId]?.name ?? cropId;
   if (!plantId) return { cropId, cropName, quality };
   const harvest = db
@@ -171,6 +206,7 @@ function provenance(db, state, lot, context) {
       typeof harvest?.crop_name === "string" ? harvest.crop_name : cropName,
     quality,
     plantId,
+    ...meta,
     ...(leafShape && { leafShape }),
     ...(typeof harvest?.matured_day === "number" && {
       maturedDay: harvest.matured_day,

@@ -5,11 +5,14 @@ import test from "node:test";
 import { chromium } from "playwright-core";
 import { HOUR, defaultGardenSettings } from "../src/home/garden-rules.mjs";
 import { createServer } from "../src/server.mjs";
-import { performGardenAction } from "../src/home/garden-console.mjs";
+import {
+  adminGardenView,
+  performGardenAction,
+} from "../src/home/garden-console.mjs";
 import { fixedWeather } from "./garden-fixtures.mjs";
 import { config, fixture } from "./helpers.mjs";
 
-async function openGarden(t, runtime) {
+async function openGarden(t, runtime, mobile = false) {
   const executablePath = process.env.QQ_TEST_GARDEN_BROWSER;
   assert.ok(
     executablePath,
@@ -20,7 +23,10 @@ async function openGarden(t, runtime) {
   t.after(() => server.close());
   const browser = await chromium.launch({ executablePath, headless: true });
   t.after(() => browser.close());
-  const page = await browser.newPage({ viewport: { width: 375, height: 850 } });
+  const page = await browser.newPage({
+    viewport: { width: 375, height: 850 },
+    ...(mobile && { isMobile: true, hasTouch: true, deviceScaleFactor: 2 }),
+  });
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
   await page.addInitScript(() => {
@@ -357,6 +363,365 @@ test("all ten explorer stories expose working actions on the 375px garden", asyn
   await refresh();
   await click("收下纸包里的豆种");
   await outcome(/纸包拆开了.*响铃豌豆/);
+  assert.equal(
+    await page
+      .locator("#garden-page")
+      .evaluate((node) => node.scrollWidth > node.clientWidth),
+    false,
+  );
+  assert.deepEqual(errors, []);
+});
+
+test("second edition plants show both faces and harvest stages at 375px", async (t) => {
+  const settings = defaultGardenSettings();
+  settings.weather = fixedWeather("cloud");
+  settings.events.rate = 0;
+  const crops = ["perilla", "sweet-corn", "pocket-pumpkin", "pocket-pumpkin"];
+  for (const crop of crops) settings.crops[crop].hours = 1;
+  const garden = explorerGarden(t, settings);
+  const plants = crops.map((cropId, index) =>
+    garden.act({
+      kind: "plant",
+      plot: index + 1,
+      cropId,
+      buyPrice: settings.crops[cropId].seedPrice,
+    }),
+  );
+  garden.advance(3);
+  const { page, errors } = await openGarden(t, garden.runtime, true);
+  const tab = (name) =>
+    page.locator(".garden-nav").getByRole("button", { name, exact: true });
+  const tile = (plot) => page.locator(`[data-plot="${plot}"]`);
+  const detail = page.locator("[data-garden-inspector]");
+  const harvest = () =>
+    detail.getByRole("button", { name: "收成", exact: true }).click();
+
+  await tile(1).getByText("晚霞紫苏", { exact: true }).waitFor();
+  await tile(1)
+    .locator('img[src$="/plant-seedling.webp"]')
+    .evaluate((img) => img.decode());
+  await detail.getByText(/叶面 .*脉/).waitFor();
+  await detail.getByText(/叶背 .*色印/).waitFor();
+  await detail.getByRole("button", { name: "看这株 · 生长手帐" }).click();
+  const journal = page.locator("[data-journal-body]");
+  await journal.getByRole("button", { name: "查看单株花卡" }).click();
+  await journal
+    .getByRole("img", { name: /正面是.*脉.*背面是.*色印/ })
+    .waitFor({ timeout: 30000 });
+  await journal.getByRole("button", { name: /返回花圃/ }).click();
+  await harvest();
+  await tile(1).getByText("空地", { exact: true }).waitFor();
+
+  await tile(2).click();
+  await detail.getByText(/第一穗正嫩/).waitFor();
+  await harvest();
+  await detail.getByText("已收 1 / 2 茬", { exact: true }).waitFor();
+  assert.equal(
+    garden.garden.read(garden.runtime.now()).plots[1].plant.id,
+    plants[1].plantId,
+  );
+  await tile(3).click();
+  await detail.getByText(/嫩瓜可以摘/).waitFor();
+  await harvest();
+  await tile(3).getByText("空地", { exact: true }).waitFor();
+
+  garden.advance(27);
+  await page.getByRole("button", { name: "刷新花园", exact: true }).click();
+  await tile(2)
+    .getByText(/第 2 茬.*干棒/)
+    .waitFor();
+  await tile(2).click();
+  await detail.getByText(/第二穗已经干熟/).waitFor();
+  await harvest();
+  await tile(2).getByText("空地", { exact: true }).waitFor();
+  await tile(4).click();
+  await detail.getByText(/瓜皮已经变硬/).waitFor();
+  await harvest();
+  await tile(4).getByText("空地", { exact: true }).waitFor();
+
+  await tab("公共仓库").click();
+  const lots = page.locator(".garden-harvest");
+  for (const trait of [/第 1 茬.*嫩棒/, /第 2 茬.*干棒/, /嫩瓜/, /硬壳/])
+    await lots.filter({ hasText: trait }).waitFor();
+  await tab("手作台").click();
+  for (const [id, name, ingredient] of [
+    ["craft-perilla-print", "晚霞紫苏叶拓", /叶面.*叶背/],
+    ["craft-roasted-corn", "烤奶油甜玉米", /第 1 茬.*嫩棒/],
+    ["craft-corn-rattle", "玉米沙锤", /第 2 茬.*干棒/],
+    ["craft-pumpkin-lantern", "手刻南瓜灯", /硬壳/],
+  ]) {
+    const recipe = page.locator(`[data-garden-recipe="${id}"]`);
+    assert.match(
+      await recipe.locator('[name="harvestId"] option:checked').textContent(),
+      ingredient,
+    );
+    await recipe.getByRole("button", { name: "制作", exact: true }).click();
+    await page
+      .locator("[data-garden-status]")
+      .getByText(new RegExp(`${name}已收入`))
+      .waitFor();
+  }
+  await tab("我的物品").click();
+  const print = page
+    .locator('[data-garden-pane="items"] .garden-good')
+    .filter({ hasText: "晚霞紫苏叶拓" });
+  await print
+    .locator('img[src$="/gift-wrapped.webp"]')
+    .evaluate((img) => img.decode());
+  await print.getByText("查看物品", { exact: true }).click();
+  await print.getByText(/叶面.*叶背/).waitFor();
+  assert.equal(
+    await page
+      .locator("#garden-page")
+      .evaluate((node) => node.scrollWidth > node.clientWidth),
+    false,
+  );
+  assert.deepEqual(errors, []);
+});
+
+test("all ten second edition stories work for one person, with real ingredients and cross-day projects", async (t) => {
+  const settings = defaultGardenSettings();
+  settings.events.rate = 1;
+  settings.initialBalance = 3000;
+  settings.weather = fixedWeather("sun");
+  const only = (selected) => {
+    for (const [id, event] of Object.entries(settings.events.entries))
+      event.weight = Number(id === selected);
+  };
+  only("half-perilla-cloth");
+  const crops = [
+    "perilla",
+    "perilla",
+    "sweet-corn",
+    "pocket-pumpkin",
+    "strawberry",
+    "mint",
+    "lambs-ear",
+    "sunflower",
+    "moonflower",
+  ];
+  for (const crop of [...crops, "radish"]) settings.crops[crop].hours = 1;
+  settings.crops.strawberry.yield = 2;
+  const garden = explorerGarden(t, settings);
+  const plant = (cropId, plot) =>
+    garden.act({
+      kind: "plant",
+      plot,
+      cropId,
+      buyPrice: settings.crops[cropId].seedPrice,
+    });
+  const plants = crops.map((cropId, index) => plant(cropId, index + 1));
+  const harvest = (plot) =>
+    garden.act({ kind: "harvest", plot, plantId: plants[plot - 1].plantId });
+  garden.advance(3);
+  const freshCorn = harvest(3).harvestId;
+  const berries = harvest(5).harvestId;
+  const mint = harvest(6).harvestId;
+  const lamb = harvest(7).harvestId;
+  const sun = harvest(8).harvestId;
+  const moon = harvest(9).harvestId;
+  const radish = plant("radish", 5);
+  const prepareJam = () =>
+    performGardenAction(
+      garden.runtime,
+      { kind: "admin", id: "administrator" },
+      {
+        requestId: randomUUID(),
+        action: {
+          kind: "craft_gift",
+          recipeId: "craft-strawberry-jam",
+          harvestIds: [berries],
+          price: 12,
+        },
+      },
+    ).itemId;
+  const firstJam = prepareJam();
+  const secondJam = prepareJam();
+  garden.advance(29);
+  const driedCorn = harvest(3).harvestId;
+  const pumpkin = harvest(4).harvestId;
+  const roots = garden.act({
+    kind: "harvest",
+    plot: 5,
+    plantId: radish.plantId,
+  }).harvestId;
+
+  const { page, errors } = await openGarden(t, garden.runtime, true);
+  page.setDefaultTimeout(10000);
+  const ticket = page.locator("[data-garden-ticket]");
+  const tab = (name) =>
+    page.locator(".garden-nav").getByRole("button", { name, exact: true });
+  const view = () => adminGardenView(garden.runtime);
+  const refresh = async () => {
+    await page.getByRole("button", { name: "刷新花园", exact: true }).click();
+    await page
+      .locator("[data-garden-status]")
+      .getByText("花园已刷新")
+      .waitFor();
+  };
+  const storyName = (id) => settings.events.entries[id].name;
+  const next = async (id) => {
+    only(id);
+    garden.configure();
+    garden.advance(24);
+    await refresh();
+    await tab("今日事件").click();
+    await ticket
+      .getByRole("heading", { name: storyName(id), exact: true })
+      .waitFor();
+  };
+  const projectScope = (name) =>
+    page.locator(".garden-explorer-project").filter({
+      has: page.getByRole("heading", { name, exact: true }),
+    });
+  const choose = async (choiceId, fields = {}, projectName) => {
+    const { text, ...target } = fields;
+    const state = view();
+    const actions = projectName
+      ? state.gardenProjects.find(({ name }) => name === projectName).actions
+      : state.eventActions;
+    const index = actions.findIndex(
+      ({ args }) =>
+        args.choiceId === choiceId &&
+        Object.entries(target).every(([key, value]) => args[key] === value),
+    );
+    assert.ok(index >= 0, `Missing ${choiceId} for ${JSON.stringify(target)}`);
+    const action = actions[index];
+    const scope = projectName ? projectScope(projectName) : ticket;
+    const direct = scope.locator(`[data-garden-event-index="${index}"]`);
+    const form = scope.locator(
+      `form[data-garden-choice]:has([value="${index}"])`,
+    );
+    const isForm = (await form.count()) > 0;
+    if (isForm) {
+      const select = form.locator("select");
+      if (await select.count()) await select.selectOption(String(index));
+      if (text !== undefined) await form.getByRole("textbox").fill(text);
+    }
+    const response = page.waitForResponse((entry) =>
+      entry.url().endsWith("/api/home-garden/act"),
+    );
+    await (
+      isForm
+        ? form.getByRole("button", { name: action.label, exact: true })
+        : direct
+    ).click();
+    const reply = await response;
+    assert.equal(reply.status(), 200, await reply.text());
+    await page
+      .locator("#garden-page[aria-busy]")
+      .waitFor({ state: "detached" });
+    return (await reply.json()).receipt;
+  };
+
+  await tab("今日事件").click();
+  await ticket
+    .getByRole("heading", { name: storyName("half-perilla-cloth") })
+    .waitFor();
+  await choose("leave-half", { plot: 1 });
+  await ticket.getByText(/另半边留给后来者/).waitFor();
+
+  await next("first-popcorn");
+  await tab("花圃").click();
+  await choose("finish-cloth", { plot: 2 }, storyName("half-perilla-cloth"));
+  await page
+    .locator("[data-garden-status]")
+    .getByText(/一张方巾印好了/)
+    .waitFor();
+  await tab("今日事件").click();
+  await choose("pop_corn", { harvestId: driedCorn });
+  await choose("name_pop", { text: "云边一声啪" });
+  await ticket.getByText(/云边一声啪/).waitFor();
+  await choose("taste_pop");
+  await ticket.getByText(/捏起一粒热爆米花/).waitFor();
+
+  await next("pumpkin-face");
+  await choose("carve-eyes", { harvestId: pumpkin });
+  await choose("carve-mouth");
+  await choose("light-lamp");
+  await ticket.getByText(/有眼睛和嘴巴的南瓜灯点亮了/).waitFor();
+  const lamp = view().personalGifts.items.find(
+    ({ giftId }) => giftId === "pumpkin-lantern",
+  );
+  assert.ok(lamp);
+
+  await next("last-spoon-jam");
+  await choose("leave-spoon", { itemId: secondJam });
+  await ticket.getByText(/最后一勺留在桌上/).waitFor();
+  assert.equal(
+    view().personalGifts.items.some(({ id }) => id === firstJam),
+    true,
+  );
+  assert.equal(
+    view().personalGifts.items.some(({ id }) => id === secondJam),
+    false,
+  );
+
+  await next("wobbly-bench");
+  await tab("花圃").click();
+  await choose("taste-spoon", {}, storyName("last-spoon-jam"));
+  await page
+    .locator("[data-garden-status]")
+    .getByText(/最后一勺果酱抹到了面包上/)
+    .waitFor();
+  await tab("今日事件").click();
+  await choose("prop_pot");
+  await choose("sit_bench");
+  await ticket.getByText(/陶盆.*号地/).waitFor();
+
+  await next("melting-mint-ice");
+  await choose("freeze_mint", { harvestId: mint });
+  await choose("sip_mint");
+  await ticket.getByText(/桌上还留着 2 杯/).waitFor();
+
+  await next("nest-materials");
+  await choose("weave-edge", { harvestId: freshCorn });
+  await choose("weave-edge", { harvestId: lamb });
+  await ticket.getByText(/巢缘添上了绒耳草/).waitFor();
+
+  await next("mixed-menu");
+  await tab("花圃").click();
+  await page
+    .locator(".garden-followups")
+    .filter({ hasText: /织巢的边编好了.*玉米衣.*绒耳叶/ })
+    .waitFor();
+  await tab("今日事件").click();
+  await choose("cook_dish", { harvestId: roots });
+  await choose("guess_dish", { cropId: "radish" });
+  await ticket.getByText(/今天用的是樱桃小萝卜/).waitFor();
+  await choose("name_dish", { text: "带 <叶> 的小菜" });
+  await ticket.getByText(/带 <叶> 的小菜/).waitFor();
+  assert.equal(await ticket.locator("叶").count(), 0);
+
+  await next("exchange-color");
+  await choose("mix-color", { harvestId: sun });
+  await ticket.getByText(/向日葵黄/).waitFor();
+
+  await next("last-window-lamp");
+  await tab("花圃").click();
+  await choose("mix-color", { harvestId: moon }, storyName("exchange-color"));
+  await page
+    .locator("[data-garden-status]")
+    .getByText(/色样卡上并排留着/)
+    .waitFor();
+  await tab("今日事件").click();
+  await choose("lend-lamp", { itemId: lamp.id });
+  await tab("我的物品").click();
+  const lampCard = page
+    .locator('[data-garden-pane="items"] .garden-good')
+    .filter({ hasText: lamp.name });
+  await lampCard.getByText("查看物品", { exact: true }).click();
+  await lampCard.getByText("窗边借用中，明早归还。", { exact: true }).waitFor();
+
+  await next("wobbly-bench");
+  const returned = view().personalGifts.items.find(({ id }) => id === lamp.id);
+  assert.ok(returned);
+  assert.equal(returned.loaned, undefined);
+  await tab("花圃").click();
+  await page
+    .locator(".garden-followups")
+    .filter({ hasText: /南瓜灯|窗边/ })
+    .waitFor();
   assert.equal(
     await page
       .locator("#garden-page")

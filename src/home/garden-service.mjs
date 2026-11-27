@@ -21,12 +21,15 @@ import {
 import { GardenClock } from "./garden-clock.mjs";
 import { GardenCalendar } from "./garden-calendar.mjs";
 import { defaultWeather } from "./garden-weather.mjs";
+import { tablePresets } from "./garden-table-rules.mjs";
 import { explorerPresets } from "./garden-explorer-rules.mjs";
 import { legacyEvents, withStoryEvents } from "./garden-event-rules.mjs";
 import {
   cropId,
   DAY,
   explorerPlantView,
+  gardenHarvestMeta,
+  perillaVariants,
   LAMBS_EAR,
   lambsEarLeafShape,
   RATTLE_PEA,
@@ -34,6 +37,7 @@ import {
   HOUR,
   defaultGardenSettings,
   gardenSettings,
+  gardenSettingsForPool,
   withExpandedCrops,
   gardenPlantRules,
   gardenVariantDetail,
@@ -62,7 +66,15 @@ const inputSchema = z.strictObject({
       eventId,
       choiceId: id,
       harvestId: z.uuid().optional(),
+      itemId: z.uuid().optional(),
+      cropId: cropId.optional(),
       plot: plot.optional(),
+      text: z
+        .string()
+        .trim()
+        .min(1)
+        .refine((value) => [...value].length <= 120)
+        .optional(),
     }),
     z.strictObject({
       kind: z.literal("set_board_note"),
@@ -177,18 +189,22 @@ export class GardenService {
         }
       });
     // Each edition is added once so that later restarts respect the gardener's edits.
-    if (
-      !this.db
-        .prepare("SELECT 1 FROM garden_explorer_editions WHERE edition=1")
-        .get()
-    )
+    const editions = [explorerPresets, tablePresets];
+    for (const [index, presets] of editions.entries()) {
+      const edition = index + 1;
+      if (
+        this.db
+          .prepare("SELECT 1 FROM garden_explorer_editions WHERE edition=?")
+          .get(edition)
+      )
+        continue;
       store.transaction(() => {
         if (
           !this.db
             .prepare(
-              "INSERT OR IGNORE INTO garden_explorer_editions VALUES (1)",
+              "INSERT OR IGNORE INTO garden_explorer_editions VALUES (?)",
             )
-            .run().changes
+            .run(edition).changes
         )
           return;
         const row = this.db
@@ -197,7 +213,7 @@ export class GardenService {
         if (!row) return;
         const saved = JSON.parse(String(row.settings));
         const pool = saved.events ?? structuredClone(legacyEvents);
-        const missing = Object.entries(explorerPresets).filter(
+        const missing = Object.entries(presets).filter(
           ([id]) => !Object.hasOwn(pool.entries, id),
         );
         if (!missing.length) return;
@@ -211,6 +227,7 @@ export class GardenService {
           )
           .run(JSON.stringify(saved));
       });
+    }
     const state = this.load();
     if (state)
       store.transaction(() => {
@@ -349,7 +366,9 @@ export class GardenService {
   configure(now, expectedRevision, input, scope = "future") {
     const settings = this.store.transaction(() => {
       const current = this.requireState();
-      const next = gardenSettings.parse(
+      const next = gardenSettingsForPool(
+        Object.keys(current.settings.events.entries).length,
+      ).parse(
         input && typeof input === "object"
           ? {
               weather: current.settings.weather,
@@ -531,6 +550,7 @@ export class GardenService {
       followups: [
         ...this.calendar.events.stories.view(current.day),
         ...this.calendar.events.explorers.followups(state.clock),
+        ...this.calendar.events.tables.followups(current.day),
       ]
         .sort((a, b) => b.day - a.day)
         .slice(0, 5),
@@ -770,7 +790,7 @@ export class GardenService {
         result,
         harvestedRef,
       );
-      const surprises = [surprise, almanacUnlock]
+      const surprises = [surprise, ...(almanacUnlock ?? [])]
         .filter(Boolean)
         .map((item) => ({
           ...item,
@@ -1022,6 +1042,7 @@ export class GardenService {
             if (plant.status !== "mature" || !plant.quality)
               throw Error("GARDEN_PLANT_STATE");
             const harvestId = randomUUID();
+            const harvestMeta = gardenHarvestMeta(plant, state.clock);
             const quantity = this.calendar.events.harvestQuantity(
               day,
               entry.id,
@@ -1051,11 +1072,13 @@ export class GardenService {
             const maxHarvests = plant.crop.maxHarvests ?? 1;
             const regrowing = harvestCount < maxHarvests;
             const cropName = state.settings.crops[cropId].name;
+            const leafVariants =
+              cropId === "perilla" ? Object.keys(perillaVariants) : undefined;
             this.db
               .prepare(
                 `INSERT INTO garden_harvests
-                (id,crop_id,planted_by,quality,quantity,harvested_at,plant_id)
-                VALUES(?,?,?,?,?,?,?)`,
+                (id,crop_id,planted_by,quality,quantity,harvested_at,plant_id,harvest_meta)
+                VALUES(?,?,?,?,?,?,?,?)`,
               )
               .run(
                 harvestId,
@@ -1065,6 +1088,9 @@ export class GardenService {
                 quantity,
                 now,
                 plant.id,
+                Object.keys(harvestMeta).length
+                  ? JSON.stringify(harvestMeta)
+                  : null,
               );
             const quality = plant.quality;
             if (regrowing) {
@@ -1094,6 +1120,8 @@ export class GardenService {
                 harvestCount,
                 harvestId,
                 cropName,
+                ...harvestMeta,
+                ...(leafVariants && { variants: leafVariants }),
                 ...(cropId === LAMBS_EAR && {
                   leafShape: lambsEarLeafShape(plant),
                 }),
@@ -1107,7 +1135,12 @@ export class GardenService {
               now,
               cropId,
               [gardenPlantRef(entry.id, plant)],
-              { kind: "harvest", quality, variant: plant.variant },
+              {
+                kind: "harvest",
+                quality,
+                variant: plant.variant,
+                variants: leafVariants,
+              },
             );
             const surprise = mutation
               ? {
@@ -1132,6 +1165,7 @@ export class GardenService {
               quantity,
               cropId,
               ...variant,
+              ...harvestMeta,
               harvestCount,
               maxHarvests,
               regrowing,
