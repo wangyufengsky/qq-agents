@@ -6,6 +6,7 @@ import {
   adjacentPlots,
   CATNIP,
   DAY,
+  ECHO_TUBEROSE,
   HOUR,
   MISTBELL,
   SUNBERRY,
@@ -151,6 +152,101 @@ export class GardenNeighbors {
     }
   }
 
+  /** @param {State} state @param {number} day @param {number} elapsed
+   * @param {import("./garden-journal.mjs").GardenJournal} journal @param {number} now */
+  settleEcho(state, day, elapsed, journal, now) {
+    const at = (day - 1) * DAY + nightEnd;
+    if (
+      day < 2 ||
+      elapsed < at ||
+      !state.settings.crops[ECHO_TUBEROSE].enabled ||
+      state.seeds[ECHO_TUBEROSE] ||
+      state.plots.some(
+        ({ plant }) =>
+          plant?.cropId === ECHO_TUBEROSE && plant.status !== "withered",
+      )
+    )
+      return;
+    const fragrant = state.plots.filter(
+      ({ plant }) =>
+        plant?.status === "mature" &&
+        ["mint", CATNIP, "moonflower", "chamomile"].includes(plant.cropId) &&
+        (plant.maturedAt ?? plant.settledAt) < (day - 1) * DAY,
+    );
+    for (const { id: plot } of state.plots.filter(({ plant }) => !plant)) {
+      const anchor = fragrant.find(
+        ({ id, plant }) =>
+          adjacentPlots(plot, id) &&
+          !this.status(`${ECHO_TUBEROSE}:${plant?.id}`)?.discovered,
+      );
+      if (!anchor?.plant) continue;
+      const key = `${ECHO_TUBEROSE}:${anchor.plant.id}`;
+      const status = this.status(key);
+      if (Number(status?.night ?? 0) >= day) return;
+      const attempts = Number(status?.attempts ?? 0) + 1;
+      const discovered = attempts >= 2;
+      this.db
+        .prepare(
+          `
+        INSERT INTO garden_neighbor_pairs VALUES (?,?,?,?)
+        ON CONFLICT(pair) DO UPDATE SET attempts=excluded.attempts,night=excluded.night,discovered=excluded.discovered
+      `,
+        )
+        .run(key, attempts, day, Number(discovered));
+      const neighbors = state.plots.flatMap(({ id, plant }) =>
+        plant &&
+        plant.status !== "withered" &&
+        adjacentPlots(plot, id) &&
+        (plant.sownClock === undefined || plant.sownClock <= at)
+          ? [gardenPlantRef(id, plant)]
+          : [],
+      );
+      if (!discovered) {
+        journal.record({
+          type: "discovery",
+          source: "night",
+          clock: at,
+          detail: {
+            stage: `${plot} 号空花盆昨夜有一阵香气`,
+            phase: "scent",
+            plot,
+          },
+          key: `${key}:scent`,
+        });
+        return;
+      }
+      const name = state.settings.crops[ECHO_TUBEROSE].name;
+      state.seeds[ECHO_TUBEROSE] = 1;
+      state.revision++;
+      this.db
+        .prepare(
+          "UPDATE garden_state SET seeds=?,clock=MAX(clock,?),revision=revision+1 WHERE id=1",
+        )
+        .run(JSON.stringify(state.seeds), at);
+      journal.record({
+        type: "discovery",
+        source: "night",
+        clock: at,
+        plants: neighbors,
+        detail: {
+          stage: `${plot} 号空盆旁找到了${name}种子`,
+          cropId: ECHO_TUBEROSE,
+          name,
+          phase: "seed",
+        },
+        key: `${key}:seed`,
+      });
+      new GardenAlmanac(this.db, journal).record(
+        { ...state, clock: at },
+        now,
+        ECHO_TUBEROSE,
+        neighbors,
+        { kind: "discover" },
+      );
+      return;
+    }
+  }
+
   /** @param {State} state @param {number} elapsed @param {import("./garden-journal.mjs").GardenJournal} journal @param {number} now
    * @param {string} cropId @param {(typeof recipes)[keyof typeof recipes]} recipe
    * @param {{trialDay:number,start:number,end:number,boosted?:boolean}[]} windows */
@@ -225,6 +321,23 @@ export class GardenNeighbors {
     }
   }
 
+  /** @param {number} clock */
+  echoScent(clock) {
+    const dayStart = Math.floor(clock / DAY) * DAY;
+    const fact = this.db
+      .prepare(
+        `
+      SELECT detail FROM garden_facts WHERE type='discovery'
+      AND json_extract(detail,'$.phase')='scent' AND clock>=? AND clock<=?
+      ORDER BY clock DESC,id DESC LIMIT 1
+    `,
+      )
+      .get(dayStart, clock);
+    if (!fact) return undefined;
+    const { stage, plot } = JSON.parse(String(fact.detail));
+    return { text: String(stage), plot: Number(plot) };
+  }
+
   /** @param {State} state @param {import("./garden-weather.mjs").Weather["kind"]} weather @param {boolean} [birdBath] */
   view(state, weather, birdBath = false) {
     const day = Math.floor(state.clock / DAY) + 1;
@@ -280,7 +393,7 @@ export class GardenNeighbors {
       mistbellDiscovered: Boolean(
         this.db
           .prepare(
-            "SELECT 1 FROM garden_neighbor_pairs WHERE discovered=1 AND pair NOT LIKE 'sunberry:%' LIMIT 1",
+            "SELECT 1 FROM garden_neighbor_pairs WHERE discovered=1 AND pair NOT LIKE 'sunberry:%' AND pair NOT LIKE 'echo-tuberose:%' LIMIT 1",
           )
           .get(),
       ),

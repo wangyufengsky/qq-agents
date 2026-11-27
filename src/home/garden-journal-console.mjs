@@ -24,7 +24,18 @@ const request = z.discriminatedUnion("view", [
     ...page,
   }),
   z.strictObject({ view: z.literal("plant_history"), plantId: id, ...page }),
-  z.strictObject({ view: z.literal("plant_image"), plantId: id }),
+  z
+    .strictObject({
+      view: z.literal("plant_image"),
+      plantId: id.optional(),
+      referenceDay: day.optional(),
+      plot: z.number().int().min(1).max(9).optional(),
+    })
+    .refine(({ plantId, referenceDay, plot }) =>
+      plantId
+        ? referenceDay === undefined && plot === undefined
+        : referenceDay !== undefined && plot !== undefined,
+    ),
   z.strictObject({ view: z.literal("digest") }),
   z.strictObject({
     view: z.literal("ack"),
@@ -45,11 +56,22 @@ export async function operatorGardenJournal(runtime, input) {
     return garden.ackDigest(admin, query.through);
   const now = runtime.now();
   const state = garden.observe(now);
-  const detail = garden.plantHistory(query, { publicView: true });
-  const snapshot = gardenPlantSnapshot(state, detail, {
-    running: state.running && !gardenPauseReason(runtime),
-    now,
-  });
+  const snapshot =
+    "referenceDay" in query && query.referenceDay !== undefined
+      ? garden.calendar.events.memories.historicalCard(
+          query.referenceDay,
+          query.plot,
+          state,
+          now,
+        )
+      : gardenPlantSnapshot(
+          state,
+          garden.plantHistory(query, { publicView: true }),
+          {
+            running: state.running && !gardenPauseReason(runtime),
+            now,
+          },
+        );
   const image = await renderGardenPlantSnapshot(snapshot, {
     signal: AbortSignal.timeout(20000),
   });

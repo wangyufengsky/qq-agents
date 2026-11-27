@@ -105,8 +105,9 @@ export function gardenPublicSnapshot(state, { running, now }) {
     running,
     nightScene: state.nightScene,
     pollenPairs: state.pollenPairs,
+    ...(state.echoScent && { echoScent: state.echoScent }),
     plots,
-    text: [heading, ...rows].join("\n"),
+    text: [heading, ...rows, state.echoScent?.text].filter(Boolean).join("\n"),
     [eventArtwork]: state.event ? gardenEventArtId(state.event) : null,
     [artwork]: state.plots.map((plot) => gardenLayers(plot)),
   };
@@ -325,12 +326,12 @@ export function gardenPlantSnapshot(state, detail, { running, now, plot }) {
   const qualityNames = { ordinary: "普通", fine: "优良", perfect: "完美" };
   const variant = plant ? gardenVariantDetail(plant) : {};
   const explorer =
-    current?.plant && !archived
+    plant && ((current && !archived) || plant.cropId === "echo-tuberose")
       ? explorerPlantView(
-          current.plant,
+          plant,
           state.clock,
           state.weather.kind,
-          current.sheltered,
+          sheltered ?? false,
         )
       : undefined;
   const conditions = [

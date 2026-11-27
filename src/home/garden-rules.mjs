@@ -134,7 +134,47 @@ export const BALSAM = "balsam";
 export const LAMBS_EAR = "lambs-ear";
 const hydrangea = "hydrangea";
 
+export const ECHO_TUBEROSE = "echo-tuberose";
+export const DRIFT_GOURD = "drift-gourd";
+export const PAPER_MOON = "paper-moon";
+
 const expandedCrops = /** @type {const} */ ([
+  [
+    DRIFT_GOURD,
+    "漂流葫芦",
+    "嫩葫芦可收。成熟后再等 24 个花园小时，就能收下适合漂流的老熟葫芦。",
+    true,
+    68,
+    52,
+    22,
+    "sun",
+    1,
+    190,
+  ],
+  [
+    PAPER_MOON,
+    "纸月花",
+    "花谢后结青荚，成熟后等 24 个花园小时可采银荚做纸月串。",
+    true,
+    58,
+    46,
+    18,
+    "neutral",
+    1,
+    170,
+  ],
+  [
+    ECHO_TUBEROSE,
+    "回声晚香",
+    "初开时把身边植物记在花卡上。",
+    false,
+    0,
+    48,
+    25,
+    "shade",
+    1,
+    365,
+  ],
   [
     "perilla",
     "晚霞紫苏",
@@ -327,7 +367,7 @@ export function perillaLeafPrint(plant) {
   };
 }
 
-/** @typedef {{harvestStage?:"tender"|"dry"|"hard",ear?:number,leafFront?:string,leafBack?:string}} HarvestMeta */
+/** @typedef {{harvestStage?:"tender"|"dry"|"hard"|"floating"|"bloom"|"green"|"silver",ear?:number,leafFront?:string,leafBack?:string}} HarvestMeta */
 /** @param {Pick<Plant,"id"|"cropId"|"status"|"maturedAt"|"harvestCount">} plant @param {number} clock @returns {HarvestMeta} */
 export function gardenHarvestMeta(plant, clock) {
   if (plant.cropId === "perilla") return perillaLeafPrint(plant);
@@ -342,10 +382,17 @@ export function gardenHarvestMeta(plant, clock) {
   }
   if (plant.cropId === "pocket-pumpkin")
     return { harvestStage: elapsed >= DAY ? "hard" : "tender" };
+  if (plant.cropId === DRIFT_GOURD)
+    return { harvestStage: elapsed >= DAY ? "floating" : "tender" };
+  if (plant.cropId === PAPER_MOON)
+    return {
+      harvestStage:
+        elapsed >= DAY ? "silver" : elapsed >= 12 * HOUR ? "green" : "bloom",
+    };
   return {};
 }
 
-/** @param {Pick<Plant,"id"|"cropId"|"status"|"podPopped"|"maturedAt"|"harvestCount">} plant @param {number} clock
+/** @param {Pick<Plant,"id"|"cropId"|"status"|"podPopped"|"maturedAt"|"harvestCount"|"echoNeighbors">} plant @param {number} clock
  * @param {import("./garden-weather.mjs").Weather["kind"]} weather @param {boolean} sheltered */
 export function explorerPlantView(plant, clock, weather, sheltered) {
   if (plant.status === "withered") return undefined;
@@ -407,6 +454,42 @@ export function explorerPlantView(plant, clock, weather, sheltered) {
           : harvestStage === "tender"
             ? "嫩瓜可以摘，也可以留着养成适合刻灯的硬皮瓜"
             : "小瓜正在长",
+    };
+  }
+  if (plant.cropId === DRIFT_GOURD) {
+    const { harvestStage } = gardenHarvestMeta(plant, clock);
+    return {
+      harvestStage,
+      text:
+        harvestStage === "floating"
+          ? "葫芦皮已老熟，可以浮在水上"
+          : harvestStage === "tender"
+            ? "嫩葫芦可摘，也可以再留一日等它老熟"
+            : "小葫芦还在长",
+    };
+  }
+  if (plant.cropId === PAPER_MOON) {
+    const { harvestStage } = gardenHarvestMeta(plant, clock);
+    return {
+      harvestStage,
+      text:
+        harvestStage === "silver"
+          ? "荚衣透出了银色纸月"
+          : harvestStage === "green"
+            ? "花谢后留下了薄薄的青荚"
+            : harvestStage === "bloom"
+              ? "纸月花正在开"
+              : "花蕾还在长",
+    };
+  }
+  if (plant.cropId === ECHO_TUBEROSE && plant.echoNeighbors) {
+    const neighbors = plant.echoNeighbors;
+    const names = neighbors
+      .map(({ plot, name }) => `${plot} 号地的${name}`)
+      .join("、");
+    return {
+      neighbors,
+      text: names ? `初开时，身边有${names}` : "初开时，四邻静静空着",
     };
   }
   return undefined;
@@ -630,7 +713,7 @@ export function gardenPlantRules(settings) {
 /** @typedef {"ordinary" | "fine" | "perfect"} Quality */
 /**
  * @typedef {{id: string, cropId: string, actorId: string, plantedAt: number, sownClock?: number,
- * settledAt: number, maturedAt?: number, harvestCount?: number, blessed?: boolean, podPopped?: boolean, fullMoonDay?: number,
+ * settledAt: number, maturedAt?: number, harvestCount?: number, blessed?: boolean, podPopped?: boolean, echoNeighbors?: {plot:number,cropId:string,name:string,plantId:string}[], fullMoonDay?: number,
  * variant?: keyof typeof gardenVariants, variantName?: string, rainHours?: number, sunHours?: number, weatherHours?: number,
  * drizzleBonusDay?: number, water: number, growth: number, dry: number, low: number,
  * floodDays?: number, floodLoss?: number, qualityAdjustment?: number, earthwormDay?: number, witheredReason?: "drought" | "flood", fertilizer: number, status: "growing" | "mature" | "withered", quality: Quality | null,

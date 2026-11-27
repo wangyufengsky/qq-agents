@@ -754,6 +754,100 @@ test("native Electron independently chooses a real harvest and names a table dis
   }
 });
 
+test("native Electron opens a real historic nine-grid cell and renders that day's flower card", async (t) => {
+  const executablePath = process.env.QQ_TEST_ELECTRON;
+  if (!executablePath) {
+    t.skip("Set QQ_TEST_ELECTRON for the native desktop check");
+    return;
+  }
+  const cfg = config(1);
+  cfg.desktopHome.enabled = true;
+  const { runtime, root } = fixture(t, { cfg });
+  const admin = randomUUID(),
+    profile = path.join(root, "electron");
+  await mkdir(profile);
+  await writeFile(path.join(root, "desktop-home-token"), desktopToken(admin));
+  const garden = runtime.home.garden;
+  const settings = defaultGardenSettings();
+  settings.weather = fixedWeather();
+  settings.events.rate = 1;
+  for (const [id, event] of Object.entries(settings.events.entries))
+    event.weight = Number(id === "old-nine-plot-photo");
+  settings.crops.radish.hours = 1;
+  let now = Date.UTC(2026, 0, 1);
+  runtime.clock = () => now;
+  garden.initialize(now, settings);
+  garden.syncClock(now, true);
+  garden.act(
+    now,
+    { kind: "admin", id: "administrator" },
+    {
+      requestId: randomUUID(),
+      action: {
+        kind: "plant",
+        plot: 1,
+        cropId: "radish",
+        buyPrice: settings.crops.radish.seedPrice,
+      },
+    },
+  );
+  now += DAY + 6 * HOUR;
+  garden.syncClock(now, true);
+  const server = createServer({ runtime, token: admin, allowLive: true });
+  t.after(() => server.close());
+  const port = await server.listen();
+  const electron = await _electron.launch({
+    executablePath,
+    args: [fileURLToPath(new URL("../desktop/home/", import.meta.url))],
+    env: {
+      ...process.env,
+      DESKTOP_HOME_TRIAL_PROFILE: profile,
+      DESKTOP_HOME_DATA_ROOT: root,
+      DESKTOP_HOME_LIVE_ROOT: "",
+      DESKTOP_HOME_PORT: String(port),
+    },
+  });
+  try {
+    const door = await electron.firstWindow();
+    await door.locator(".door-button").click();
+    let panel;
+    for (let i = 0; i < 80 && !panel; i++) {
+      panel = electron
+        .windows()
+        .find((value) => value.url().includes("type=panel"));
+      if (!panel) await delay(100);
+    }
+    assert.ok(panel);
+    await panel.getByRole("button", { name: "花园", exact: true }).click();
+    await panel.getByRole("button", { name: "今日事件", exact: true }).click();
+    const ticket = panel.locator("[data-garden-ticket]");
+    const grids = ticket.locator(".garden-photo-grid");
+    await grids.first().waitFor();
+    assert.deepEqual(
+      await grids.evaluateAll((list) =>
+        list.map((grid) => grid.children.length),
+      ),
+      [9, 9],
+    );
+    await grids
+      .first()
+      .getByRole("button", {
+        name: "对照第 1 天第 1 格 · 樱桃小萝卜",
+        exact: true,
+      })
+      .click();
+    await ticket
+      .getByRole("button", { name: "查看对照花卡", exact: true })
+      .click();
+    await ticket
+      .locator("[data-garden-history-image]")
+      .getByRole("img", { name: /樱桃小萝卜/ })
+      .waitFor({ timeout: 30000 });
+  } finally {
+    await electron.close();
+  }
+});
+
 test("Chromium renders distinct morning and afternoon flower cards with the same frame and no dedicated sticker", async (t) => {
   const { runtime } = fixture(t, { cfg: config(1) });
   let now = Date.UTC(2026, 0, 1);

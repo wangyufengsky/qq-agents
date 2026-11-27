@@ -21,6 +21,7 @@ import {
 import { GardenClock } from "./garden-clock.mjs";
 import { GardenCalendar } from "./garden-calendar.mjs";
 import { defaultWeather } from "./garden-weather.mjs";
+import { memoryPresets } from "./garden-memory-rules.mjs";
 import { tablePresets } from "./garden-table-rules.mjs";
 import { explorerPresets } from "./garden-explorer-rules.mjs";
 import { legacyEvents, withStoryEvents } from "./garden-event-rules.mjs";
@@ -67,6 +68,7 @@ const inputSchema = z.strictObject({
       choiceId: id,
       harvestId: z.uuid().optional(),
       itemId: z.uuid().optional(),
+      referenceDay: z.number().int().positive().optional(),
       cropId: cropId.optional(),
       plot: plot.optional(),
       text: z
@@ -189,7 +191,7 @@ export class GardenService {
         }
       });
     // Each edition is added once so that later restarts respect the gardener's edits.
-    const editions = [explorerPresets, tablePresets];
+    const editions = [explorerPresets, tablePresets, memoryPresets];
     for (const [index, presets] of editions.entries()) {
       const edition = index + 1;
       if (
@@ -507,6 +509,7 @@ export class GardenService {
       current.effectiveWeather.kind,
       hasGardenFacility(this.db, "bird_bath"),
     );
+    const echoScent = this.calendar.neighbors.echoScent(state.clock);
     const nightDay =
       state.clock % DAY < 6 * HOUR ? current.day - 1 : current.day;
     return {
@@ -525,6 +528,7 @@ export class GardenService {
         note: notes.plots[plot.id] ?? null,
       })),
       boardNotes: notes,
+      ...(echoScent && { echoScent }),
       almanac,
       almanacSummary,
       facilities,
@@ -547,10 +551,12 @@ export class GardenService {
       fullMoon:
         neighbors.nightScene.period === "night" &&
         this.calendar.fullMoon(nightDay),
+      gateHistory: this.calendar.events.memories.gateHistory(),
       followups: [
         ...this.calendar.events.stories.view(current.day),
         ...this.calendar.events.explorers.followups(state.clock),
         ...this.calendar.events.tables.followups(current.day),
+        ...this.calendar.events.memories.followups(current.day),
       ]
         .sort((a, b) => b.day - a.day)
         .slice(0, 5),

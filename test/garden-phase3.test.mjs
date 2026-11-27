@@ -104,7 +104,10 @@ test("all six recipes work, and the rack unlocks advanced recipes and requotes a
   const sachet = f.lot("chamomile");
   const make = (recipeId, harvestIds, price) =>
     f.act({ kind: "craft_gift", recipeId, harvestIds, price });
-  assert.equal(f.view().craftRecipes.filter(({ locked }) => !locked).length, 9);
+  assert.equal(
+    f.view().craftRecipes.filter(({ locked }) => !locked).length,
+    10,
+  );
   for (const [recipeId, harvestId, fee] of [
     ["craft-pressed-flower", flower, 10],
     ["craft-strawberry-jam", berry, 12],
@@ -126,7 +129,7 @@ test("all six recipes work, and the rack unlocks advanced recipes and requotes a
   );
   f.act({ kind: "build_facility", facilityId: "drying_rack", price: 420 });
   const recipes = f.view().craftRecipes;
-  assert.equal(recipes.filter(({ locked }) => !locked).length, 11);
+  assert.equal(recipes.filter(({ locked }) => !locked).length, 12);
   assert.equal(
     recipes.find(({ id }) => id === "craft-pressed-flower").price,
     5,

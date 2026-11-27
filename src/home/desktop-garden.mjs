@@ -47,6 +47,8 @@ function operatorView(garden) {
     eventHistory: garden.eventHistory,
     followups: garden.followups,
     gardenProjects: garden.gardenProjects,
+    gateHistory: garden.gateHistory,
+    echoScent: garden.echoScent,
     activity: garden.activity,
     ledger: garden.ledger,
     gifts: garden.gifts,

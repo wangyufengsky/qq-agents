@@ -3,7 +3,13 @@ import {
   gardenGrowthStages,
   gardenStageLabel,
 } from "../../public/garden-art/stages.js";
-import { DAY, gardenVariantDetail, HOUR } from "./garden-rules.mjs";
+import {
+  adjacentPlots,
+  DAY,
+  ECHO_TUBEROSE,
+  gardenVariantDetail,
+  HOUR,
+} from "./garden-rules.mjs";
 
 /** @typedef {import("./garden-rules.mjs").Plant} Plant */
 /** @typedef {import("./garden-service.mjs").State} State */
@@ -38,6 +44,53 @@ export function gardenPlantRef(plot, plant) {
     cropId: plant.cropId,
     name: plant.crop.name,
   };
+}
+
+/** @param {GardenJournal} journal @param {number} plot @param {Plant} plant
+ * @param {State["plots"]} plots @param {(entry:State["plots"][number],clock:number)=>Plant|null} [plantAt] */
+export function recordEchoBloom(
+  journal,
+  plot,
+  plant,
+  plots,
+  plantAt = (entry) => entry.plant,
+) {
+  if (
+    plant.cropId !== ECHO_TUBEROSE ||
+    plant.status !== "mature" ||
+    plant.maturedAt === undefined ||
+    plant.echoNeighbors
+  )
+    return;
+  const clock = plant.maturedAt;
+  plant.echoNeighbors = plots.flatMap((entry) => {
+    if (!adjacentPlots(plot, entry.id)) return [];
+    const neighbor = plantAt(entry, clock);
+    if (
+      !neighbor ||
+      neighbor.status === "withered" ||
+      (neighbor.sownClock !== undefined && neighbor.sownClock > clock)
+    )
+      return [];
+    return [
+      { ...gardenPlantRef(entry.id, neighbor), name: neighbor.crop.name },
+    ];
+  });
+  const names = plant.echoNeighbors
+    .map(({ plot: id, name }) => `${id} 号地的${name}`)
+    .join("、");
+  journal.record({
+    type: "mature",
+    clock,
+    source: "growth",
+    key: `echo-first-bloom:${plant.id}`,
+    plants: [gardenPlantRef(plot, plant), ...plant.echoNeighbors],
+    detail: {
+      stage: names
+        ? `回声晚香初开，身边有${names}`
+        : "回声晚香初开，四邻静静空着",
+    },
+  });
 }
 
 /** @param {import("node:sqlite").SQLOutputValue} value */
@@ -89,6 +142,7 @@ function publicPlantSnapshot(plant) {
     quality: plant.quality,
     ...gardenVariantDetail(plant),
     harvestCount: plant.harvestCount ?? 0,
+    ...(plant.echoNeighbors && { echoNeighbors: plant.echoNeighbors }),
     fertilizer: plant.fertilizer,
     water: plant.water,
     dry: plant.dry,

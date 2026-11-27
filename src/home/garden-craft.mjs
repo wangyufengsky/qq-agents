@@ -39,6 +39,13 @@ const recipes = {
     leaf: true,
     requirements: ["1 份带完整绒叶的绒耳草收成"],
   },
+  "craft-paper-moon-string": {
+    price: 12,
+    count: 1,
+    crops: ["paper-moon"],
+    stage: "silver",
+    requirements: ["1 份成熟的纸月花银荚"],
+  },
   "craft-perilla-print": {
     price: 10,
     count: 1,

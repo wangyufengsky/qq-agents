@@ -1,6 +1,6 @@
 // @ts-check
 import { GARDEN_NIGHT_START, GardenNeighbors } from "./garden-neighbors.mjs";
-import { gardenPlantRef } from "./garden-journal.mjs";
+import { gardenPlantRef, recordEchoBloom } from "./garden-journal.mjs";
 import { GardenEvents } from "./garden-events.mjs";
 import { settleGardenRumors } from "./garden-companion.mjs";
 import { hasGardenFacility } from "./garden-facilities.mjs";
@@ -97,6 +97,7 @@ export class GardenCalendar {
       harvests,
       caretakers,
       ...this.events.tables.context(),
+      ...this.events.memories.context(state, (previous?.day ?? 0) + 1),
       birdBath: hasGardenFacility(this.db, "bird_bath"),
       plots: state.plots,
       day: (previous?.day ?? 0) + 1,
@@ -222,12 +223,21 @@ export class GardenCalendar {
     return { boundary, weather, slow, pausedPlot };
   }
 
-  /** @param {State} state @param {GardenDay} current @param {number} elapsed */
-  project(state, current, elapsed) {
+  /** @param {State} state @param {GardenDay} current @param {number} elapsed @param {number} now */
+  project(state, current, elapsed, now) {
+    const dawn = (current.day - 1) * DAY + 6 * HOUR;
+    let checkEcho = current.day >= 2 && state.clock < dawn && elapsed >= dawn;
+    const settleDawn = () => {
+      this.projectAt(state, current, dawn);
+      this.neighbors.settleEcho(state, current.day, dawn, this.journal, now);
+      checkEcho = false;
+    };
     for (const due of this.events.explorers.due(elapsed)) {
+      if (checkEcho && due.trigger_clock >= dawn) settleDawn();
       this.projectAt(state, current, due.trigger_clock);
       this.events.explorers.settleComparison(due, state);
     }
+    if (checkEcho) settleDawn();
     return this.projectAt(state, current, elapsed);
   }
 
@@ -297,6 +307,25 @@ export class GardenCalendar {
                 ),
               neighborBuffs(state, entry.id).length > 0,
             );
+      if (original.status === "growing")
+        recordEchoBloom(
+          this.journal,
+          entry.id,
+          plant,
+          state.plots,
+          (neighbor, clock) =>
+            neighbor.plant && neighbor.id !== pausedPlot
+              ? projectPlant(
+                  neighbor.plant,
+                  clock,
+                  weather,
+                  neighbor.sheltered,
+                  slow,
+                  undefined,
+                  neighborBuffs(state, neighbor.id).length > 0,
+                )
+              : neighbor.plant,
+        );
       if (plant.status === "withered" && original.status !== "withered")
         this.journal.record({
           type: "withered",
@@ -352,9 +381,9 @@ export class GardenCalendar {
   /** @param {State} state @param {GardenDay} current @param {number} now @param {boolean} [preview] */
   closeDay(state, current, now, preview = false) {
     const priorDay = current.day;
-    const closingWeather = this.project(state, current, priorDay * DAY);
+    const closingWeather = this.project(state, current, priorDay * DAY, now);
     this.settleNeighbors(state, current, priorDay * DAY, now);
-    const { pausedPlot } = this.conditions(current, priorDay * DAY);
+    const { pausedPlot, boundary } = this.conditions(current, priorDay * DAY);
     state.plots = state.plots.map((entry) => {
       if (!entry.plant || entry.id === pausedPlot) return entry;
       const plant = closePlantDay(entry.plant, closingWeather, entry.sheltered);
@@ -369,10 +398,12 @@ export class GardenCalendar {
       if (plant !== entry.plant) this.journal.updatePlant(plant);
       return { ...entry, plant };
     });
+    this.events.memories.saveDay(state, current, closingWeather, boundary, now);
     this.events.explorers.settleVisits(state, priorDay, now, closingWeather);
     this.events.close(priorDay, state, now);
     this.events.settleFollowups(priorDay + 1, state, now, !preview);
     this.events.tables.settle(priorDay + 1);
+    this.events.memories.settle(priorDay + 1);
     const context = this.drawContext(state, current);
     return { context, next: this.drawNextWeather(state, current, context) };
   }
@@ -451,7 +482,7 @@ export class GardenCalendar {
           state.balance,
         );
     }
-    const effectiveWeather = this.project(state, current, elapsed);
+    const effectiveWeather = this.project(state, current, elapsed, now);
     this.settleNeighbors(state, current, elapsed, now);
     state.clock = elapsed;
     this.events.explorers.settleVisits(

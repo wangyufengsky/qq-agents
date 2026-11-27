@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import { chromium } from "playwright-core";
-import { HOUR, defaultGardenSettings } from "../src/home/garden-rules.mjs";
+import { DAY, HOUR, defaultGardenSettings } from "../src/home/garden-rules.mjs";
 import { createServer } from "../src/server.mjs";
 import {
   adminGardenView,
@@ -722,6 +722,394 @@ test("all ten second edition stories work for one person, with real ingredients 
     .locator(".garden-followups")
     .filter({ hasText: /南瓜灯|窗边/ })
     .waitFor();
+  assert.equal(
+    await page
+      .locator("#garden-page")
+      .evaluate((node) => node.scrollWidth > node.clientWidth),
+    false,
+  );
+  assert.deepEqual(errors, []);
+});
+
+test("third edition plants show real stages and remember the same opening neighbors at 375px", async (t) => {
+  const settings = defaultGardenSettings();
+  settings.weather = fixedWeather();
+  settings.events.rate = 0;
+  const crops = ["drift-gourd", "paper-moon", "echo-tuberose", "sunflower"];
+  for (const crop of crops) settings.crops[crop].hours = 1;
+  const garden = explorerGarden(t, settings);
+  // Discovery is covered by the garden rule tests. Seed this fixture so it can check the actual renderer.
+  garden.garden.db
+    .prepare("UPDATE garden_state SET seeds=? WHERE id=1")
+    .run(JSON.stringify({ "echo-tuberose": 1 }));
+  const plant = (cropId, plot) =>
+    garden.act({
+      kind: "plant",
+      plot,
+      cropId,
+      buyPrice: settings.crops[cropId].seedPrice,
+    });
+  plant("drift-gourd", 1);
+  plant("paper-moon", 2);
+  const neighbor = plant("sunflower", 5);
+  plant("echo-tuberose", 4);
+  garden.advance(3);
+  const { page, errors } = await openGarden(t, garden.runtime, true);
+  const tab = (name) =>
+    page.locator(".garden-nav").getByRole("button", { name, exact: true });
+  const tile = (plot) => page.locator(`[data-plot="${plot}"]`);
+  const detail = page.locator("[data-garden-inspector]");
+  const refresh = () =>
+    page.getByRole("button", { name: "刷新花园", exact: true }).click();
+  await tile(1).getByText("嫩葫芦", { exact: true }).waitFor();
+  await tile(2).getByText("正开花", { exact: true }).waitFor();
+  await tile(2)
+    .locator('img[src$="/plant-seedling.webp"]')
+    .evaluate((image) => image.decode());
+  await tile(4).click();
+  const remembered = detail.locator(".garden-echo-neighbors");
+  await remembered.getByText("第 5 块地 · 向日葵", { exact: true }).waitFor();
+  garden.act({ kind: "harvest", plot: 5, plantId: neighbor.plantId });
+  plant("radish", 5);
+  garden.advance(13);
+  await refresh();
+  await tile(2).getByText("青荚", { exact: true }).waitFor();
+  await remembered.getByText("第 5 块地 · 向日葵", { exact: true }).waitFor();
+  await detail.getByRole("button", { name: "看这株 · 生长手帐" }).click();
+  const journal = page.locator("[data-journal-body]");
+  await journal.getByRole("button", { name: "查看单株花卡" }).click();
+  await journal
+    .getByRole("img", { name: /初开时.*5 号地的向日葵/ })
+    .waitFor({ timeout: 30000 });
+  await journal.getByRole("button", { name: /返回花圃/ }).click();
+
+  garden.advance(13);
+  await refresh();
+  await tile(1).getByText("可漂流", { exact: true }).waitFor();
+  await tile(2).getByText("银荚", { exact: true }).waitFor();
+  for (const plot of [1, 2]) {
+    await tile(plot).click();
+    await detail.getByRole("button", { name: "收成", exact: true }).click();
+    await tile(plot).getByText("空地", { exact: true }).waitFor();
+  }
+  await tab("公共仓库").click();
+  await page
+    .locator(".garden-harvest")
+    .filter({ hasText: /漂流葫芦.*可漂流/ })
+    .waitFor();
+  await page
+    .locator(".garden-harvest")
+    .filter({ hasText: /纸月花.*银荚/ })
+    .waitFor();
+  await tab("手作台").click();
+  const string = page.locator('[data-garden-recipe="craft-paper-moon-string"]');
+  assert.match(
+    await string.locator('[name="harvestId"] option:checked').textContent(),
+    /纸月花.*银荚/,
+  );
+  await string.getByRole("button", { name: "制作", exact: true }).click();
+  await page
+    .locator("[data-garden-status]")
+    .getByText(/纸月串已收入/)
+    .waitFor();
+  await tab("我的物品").click();
+  const item = page
+    .locator('[data-garden-pane="items"] .garden-good')
+    .filter({ hasText: "纸月串" });
+  await item
+    .locator('img[src$="/gift-wrapped.webp"]')
+    .evaluate((image) => image.decode());
+  assert.equal(
+    await page
+      .locator("#garden-page")
+      .evaluate((node) => node.scrollWidth > node.clientWidth),
+    false,
+  );
+  assert.deepEqual(errors, []);
+});
+
+test("all ten third edition memory events support actual choices and safe cross-day history", async (t) => {
+  const settings = defaultGardenSettings();
+  settings.events.rate = 1;
+  settings.initialBalance = 3500;
+  settings.weather = fixedWeather("drizzle");
+  const entry = (story) =>
+    Object.entries(settings.events.entries).find(
+      ([, value]) => value.effect.story === story,
+    );
+  const only = (story) => {
+    const [selected] = entry(story);
+    for (const [id, event] of Object.entries(settings.events.entries))
+      event.weight = Number(id === selected);
+  };
+  only("old_sign");
+  const crops = [
+    "drift-gourd",
+    "paper-moon",
+    "sunflower",
+    "rattle-pea",
+    "pocket-pumpkin",
+    "radish",
+    "mint",
+    "paper-moon",
+  ];
+  for (const crop of crops) settings.crops[crop].hours = 1;
+  settings.crops.clover.hours = 1000;
+  settings.crops.tomato.hours = 1000;
+  const garden = explorerGarden(t, settings);
+  const plant = (cropId, plot) =>
+    garden.act({
+      kind: "plant",
+      plot,
+      cropId,
+      buyPrice: settings.crops[cropId].seedPrice,
+    });
+  const plants = crops.map((cropId, index) => plant(cropId, index + 1));
+  const harvest = (plot) =>
+    garden.act({ kind: "harvest", plot, plantId: plants[plot - 1].plantId });
+  garden.advance(3);
+  harvest(6);
+  plant("clover", 6);
+  garden.act({
+    kind: "build_facility",
+    facilityId: "weather_chime",
+    price: 280,
+  });
+  garden.advance(29);
+  const gourd = harvest(1).harvestId;
+  const silver = harvest(2).harvestId;
+  const pumpkin = harvest(5).harvestId;
+  const threading = harvest(8).harvestId;
+  const craft = (recipeId, harvestIds, price) =>
+    performGardenAction(
+      garden.runtime,
+      { kind: "admin", id: "administrator" },
+      {
+        requestId: randomUUID(),
+        action: { kind: "craft_gift", recipeId, harvestIds, price },
+      },
+    ).itemId;
+  const lamp = craft("craft-pumpkin-lantern", [pumpkin], 14);
+  const string = craft("craft-paper-moon-string", [threading], 12);
+  const { page, errors } = await openGarden(t, garden.runtime, true);
+  page.setDefaultTimeout(10000);
+  const view = () => adminGardenView(garden.runtime);
+  const tab = (name) =>
+    page.locator(".garden-nav").getByRole("button", { name, exact: true });
+  const ticket = page.locator("[data-garden-ticket]");
+  const refresh = async () => {
+    await page.getByRole("button", { name: "刷新花园", exact: true }).click();
+    await page
+      .locator("[data-garden-status]")
+      .getByText("花园已刷新")
+      .waitFor();
+  };
+  const next = async (story, hour = 8) => {
+    only(story);
+    garden.configure();
+    const now = garden.garden.read(garden.runtime.now()).clock;
+    garden.advance((DAY - (now % DAY)) / HOUR + hour);
+    await refresh();
+    await tab("今日事件").click();
+    await ticket
+      .getByRole("heading", { name: entry(story)[1].name, exact: true })
+      .waitFor();
+  };
+  const choose = async (choiceId, fields = {}, { project, label } = {}) => {
+    const { text, ...target } = fields;
+    const current = view();
+    const name = project && entry(project)[1].name;
+    const actions = project
+      ? current.gardenProjects.find((candidate) => candidate.name === name)
+          .actions
+      : current.eventActions;
+    const index = actions.findIndex(
+      ({ args }) =>
+        args.choiceId === choiceId &&
+        Object.entries(target).every(([key, value]) => args[key] === value),
+    );
+    assert.ok(index >= 0, `Missing ${choiceId} ${JSON.stringify(target)}`);
+    const action = actions[index];
+    const scope = project
+      ? page
+          .locator(".garden-explorer-project")
+          .filter({ has: page.getByRole("heading", { name, exact: true }) })
+      : ticket;
+    const direct = scope.locator(`[data-garden-event-index="${index}"]`);
+    const form = scope.locator(
+      `form[data-garden-choice]:has([value="${index}"])`,
+    );
+    const filled = (await form.count()) > 0;
+    if (filled) {
+      const select = form.locator("select");
+      if (await select.count()) {
+        await select.selectOption(String(index));
+        if (label)
+          assert.match(
+            await select.locator("option:checked").textContent(),
+            label,
+          );
+      }
+      if (text !== undefined) await form.getByRole("textbox").fill(text);
+    }
+    const response = page.waitForResponse((entry) =>
+      entry.url().endsWith("/api/home-garden/act"),
+    );
+    await (
+      filled
+        ? form.getByRole("button", { name: action.label, exact: true })
+        : direct
+    ).click();
+    const reply = await response;
+    assert.equal(reply.status(), 200, await reply.text());
+    assert.deepEqual(reply.request().postDataJSON().action, {
+      kind: "choose_event",
+      ...action.args,
+      ...(text !== undefined && { text }),
+    });
+    await page
+      .locator("#garden-page[aria-busy]")
+      .waitFor({ state: "detached" });
+    return (await reply.json()).receipt;
+  };
+
+  await tab("今日事件").click();
+  await ticket
+    .getByRole("heading", { name: entry("old_sign")[1].name })
+    .waitFor();
+  await choose("then_and_now", { plot: 6 });
+  await ticket.getByText(/旧牌写着.*樱桃小萝卜.*今天.*野生三叶草/).waitFor();
+
+  await next("old_photo");
+  const photos = ticket.locator(".garden-photo-grid");
+  await photos.first().waitFor();
+  assert.deepEqual(
+    await photos.evaluateAll((grids) =>
+      grids.map((grid) => grid.children.length),
+    ),
+    [9, 9],
+  );
+  assert.equal(
+    await photos
+      .nth(1)
+      .locator(".garden-photo-cell")
+      .nth(0)
+      .getByText("空地")
+      .count(),
+    1,
+  );
+  const old = view().eventActions.find(
+    ({ args }) => args.choiceId === "compare-plot",
+  );
+  assert.ok(old?.args.referenceDay);
+  await ticket
+    .getByLabel("旧照日期")
+    .selectOption(String(old.args.referenceDay));
+  await photos
+    .first()
+    .getByRole("button", {
+      name: new RegExp(
+        `对照第 ${old.args.referenceDay} 天第 ${old.args.plot} 格`,
+      ),
+    })
+    .waitFor();
+  await choose("compare-plot", {
+    referenceDay: old.args.referenceDay,
+    plot: old.args.plot,
+  });
+  await ticket
+    .getByRole("button", { name: "查看对照花卡", exact: true })
+    .click();
+  await ticket
+    .locator("[data-garden-history-image]")
+    .getByRole("img")
+    .waitFor({ timeout: 30000 });
+
+  await next("drift_gourd");
+  await choose(
+    "release-gourd",
+    { harvestId: gourd },
+    { label: /漂流葫芦.*可漂流/ },
+  );
+  await next("future_jar");
+  const candidate = view().eventActions.find(
+    ({ args }) => args.choiceId === "bury-rain",
+  );
+  assert.ok(candidate?.args.plot);
+  await choose("bury-rain", { plot: candidate.args.plot });
+
+  await next("group_photo");
+  const watered = plant("tomato", 9);
+  await refresh();
+  await tab("花圃").click();
+  await page.locator('[data-plot="9"]').click();
+  await page
+    .locator("[data-garden-inspector]")
+    .getByRole("button", { name: "浇水", exact: true })
+    .click();
+  await page
+    .locator("[data-garden-status]")
+    .getByText(/浇水完成/)
+    .waitFor();
+  assert.equal(
+    garden.garden.read(garden.runtime.now()).plots[8].plant.id,
+    watered.plantId,
+  );
+  await tab("今日事件").click();
+  await choose("photo_can");
+  await ticket
+    .getByText(/今天用过的水壶.*实际|今天用过的水壶.*照料者.*管理员/)
+    .waitFor();
+
+  await next("paper_shadow", 20);
+  const shadow = view().eventActions.find(
+    ({ args }) =>
+      args.choiceId === "make-shadow-card" &&
+      args.harvestId === silver &&
+      args.itemId === lamp,
+  );
+  assert.ok(shadow?.args.plot);
+  await choose(
+    "make-shadow-card",
+    { plot: shadow.args.plot, harvestId: silver, itemId: lamp },
+    {
+      label: /第 .* 块地.*手刻南瓜灯.*纸月花.*银荚/,
+    },
+  );
+  assert.ok(view().personalGifts.items.some(({ id }) => id === lamp));
+
+  await next("poem");
+  const first = await ticket.locator(".garden-event-outcome").textContent();
+  assert.ok(first);
+  await choose("add_line", { text: "池边留下 <一片月光>" });
+  await ticket
+    .locator(".garden-event-outcome")
+    .getByText(/池边留下 <一片月光>/)
+    .waitFor();
+  await choose("keep_poem");
+  assert.equal(await ticket.locator("一片月光").count(), 0);
+  await tab("花圃").click();
+  await choose("cut-dipper", {}, { project: "drift_gourd" });
+  assert.ok(
+    view().personalGifts.items.some(({ giftId }) => giftId === "gourd-dipper"),
+  );
+
+  await next("wind_note");
+  await choose("keep_tone", { plot: 4 });
+  await ticket.getByText(/两声一起留下了/).waitFor();
+  await tab("花圃").click();
+  await choose("open-jar", {}, { project: "future_jar" });
+
+  await next("seed_memory");
+  await choose("turn_seed", { cropId: "radish" });
+  await ticket.getByText(/第一次播在第 1 天的 6 号地/).waitFor();
+  await next("gate_display");
+  await choose("hang-keepsake", { itemId: string }, { label: /纸月串/ });
+  assert.ok(view().personalGifts.items.some(({ id }) => id === string));
+  await tab("历季园门").click();
+  const gates = page.locator("[data-garden-pane=gate]");
+  await gates.getByText(/第 .* 季 · 第 .* 天/).waitFor();
+  assert.equal(await gates.getByText(string).count(), 0);
   assert.equal(
     await page
       .locator("#garden-page")

@@ -113,6 +113,49 @@ export const gardenGifts = {
     usable: false,
     eventOnly: true,
   },
+  "craft-paper-moon-string": {
+    name: "纸月串",
+    price: 0,
+    usable: false,
+    eventOnly: true,
+  },
+  "gourd-dipper": {
+    name: "漂流葫芦水瓢",
+    price: 0,
+    usable: false,
+    eventOnly: true,
+  },
+  "drift-gourd": { name: "漂流葫芦", price: 0, usable: false, eventOnly: true },
+  "paper-moon-night-card": {
+    name: "纸月拓影卡",
+    price: 0,
+    usable: false,
+    eventOnly: true,
+  },
+  "plot-history-sign": {
+    name: "地块双面木牌",
+    price: 0,
+    usable: false,
+    eventOnly: true,
+  },
+  "garden-group-photo": {
+    name: "园丁缺席的合影",
+    price: 0,
+    usable: false,
+    eventOnly: true,
+  },
+  "four-line-poem-card": {
+    name: "园里的四行诗",
+    price: 0,
+    usable: false,
+    eventOnly: true,
+  },
+  "remembered-seed-card": {
+    name: "初播种子卡",
+    price: 0,
+    usable: false,
+    eventOnly: true,
+  },
   "garden-sketch-card": {
     name: "花园速写画",
     price: 0,
@@ -133,7 +176,7 @@ export function isGardenMerchantGift(id) {
   return Object.hasOwn(gardenGifts, id) && !("eventOnly" in gift);
 }
 
-/** @typedef {{ingredients: {cropName:string,quality:string,maturedDay?:number,carers?:string[],leafShape?:string,ear?:number,harvestStage?:"tender"|"dry"|"hard",leafFront?:string,leafBack?:string,color?:string}[],makers?:string[],makerRefs?:{kind:string,id:string,name:string}[],mothMark?:boolean}} GardenCraftOrigin */
+/** @typedef {{ingredients: {cropName:string,quality:string,maturedDay?:number,carers?:string[],leafShape?:string,ear?:number,harvestStage?:"tender"|"dry"|"hard"|"floating"|"bloom"|"green"|"silver",leafFront?:string,leafBack?:string,color?:string}[],makers?:string[],makerRefs?:{kind:string,id:string,name:string}[],mothMark?:boolean}} GardenCraftOrigin */
 /** @param {GardenCraftOrigin|undefined|null} meta */
 export function gardenCraftOrigin(meta) {
   if (!meta?.ingredients?.length) return "";
@@ -157,7 +200,15 @@ export function gardenCraftOrigin(meta) {
         item.leafBack ? `叶背${item.leafBack}` : "",
         item.ear ? `第 ${item.ear} 穗` : "",
         item.harvestStage &&
-          { tender: "鲜嫩", dry: "干熟", hard: "硬皮" }[item.harvestStage],
+          {
+            tender: "鲜嫩",
+            dry: "干熟",
+            hard: "硬皮",
+            floating: "适合漂流",
+            bloom: "花期",
+            green: "青荚",
+            silver: "银荚",
+          }[item.harvestStage],
       ].filter(Boolean);
       const shape = descriptors.length ? `（${descriptors.join("、")}）` : "";
       return `${when}${quality ? quality + "品质的" : ""}${item.cropName}${shape}${who}`;

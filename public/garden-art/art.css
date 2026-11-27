@@ -916,6 +916,78 @@
   inset: 0 0 0 auto;
   transform: scaleX(-1);
 }
+.garden-photo-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-block: 8px;
+}
+.garden-photo-pair p,
+.garden-photo-pair label {
+  display: block;
+  margin: 0 0 6px;
+}
+.garden-photo-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+}
+.garden-photo-grid .garden-photo-cell {
+  display: grid;
+  align-content: start;
+  gap: 2px;
+  min-width: 0;
+  min-height: 65px;
+  padding: 5px;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  border: 1px solid #c9ba9f;
+  border-radius: 4px;
+  background: #f5efdf;
+  color: #3b503a;
+  text-align: start;
+}
+.garden-photo-cell span {
+  font-size: 11px;
+}
+.garden-photo-cell strong,
+.garden-photo-cell small {
+  font-size: 12px;
+}
+.garden-photo-grid button.garden-photo-cell {
+  background: #ecebd5;
+  cursor: pointer;
+}
+[data-garden-history-image] canvas {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin-block: 8px;
+}
+@container (max-width: 650px) {
+  .garden-photo-pair {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.garden-event-outcome {
+  white-space: pre-wrap;
+}
+.garden-gate-history {
+  display: grid;
+  gap: 8px;
+  padding: 0;
+  list-style: none;
+}
+.garden-gate-history li {
+  display: grid;
+  gap: 3px;
+  padding: 8px 10px;
+  border-inline-start: 3px solid #87946d;
+  background: #f2eddd;
+}
+.garden-echo-neighbors {
+  padding-inline-start: 1.4em;
+}
 .garden-ink-duo {
   display: flex;
   flex-wrap: wrap;

@@ -22,7 +22,12 @@ import { giftBudgetLimits } from "./garden-items.mjs";
 import { floodRisk } from "./garden-risks.mjs";
 
 /** @typedef {ReturnType<import("./garden-service.mjs").GardenService["read"]>} GardenState */
-const hiddenCrops = ["mistbell", "sunberry", "four_leaf_clover"];
+const hiddenCrops = [
+  "mistbell",
+  "sunberry",
+  "four_leaf_clover",
+  "echo-tuberose",
+];
 const instanceAdmin = {
   kind: /** @type {const} */ ("admin"),
   id: "administrator",
@@ -484,12 +489,14 @@ export function subjectGardenView(
       ...state.nightScene,
       fullMoon: state.fullMoon,
       pollenPairs: state.pollenPairs,
+      ...(state.echoScent && { echoScent: state.echoScent }),
     },
     observations,
     highlights: garden.journal.highlights(identity),
     boardNotes: state.boardNotes,
     rumors: state.rumors,
     followups: state.followups,
+    gateHistory: state.gateHistory.slice(0, 3),
     gardenProjects: gardenProjects(garden, state, owner),
     almanacSummary: state.almanacSummary,
     ...gardenWorkshop(runtime, state),
@@ -762,6 +769,8 @@ export function recordGardenObservation(runtime, roleId, moment, now) {
  * @param {import("./garden-items.mjs").Owner} [owner] */
 function currentExplorerActions(garden, state, owner) {
   const event = garden.calendar.events.get(state.day);
+  if (event?.kind === "memory")
+    return garden.calendar.events.memories.actions(event, state, owner);
   if (event?.kind === "table")
     return garden.calendar.events.tables.actions(event, state, owner);
   if (event?.kind === "explorer")
@@ -775,6 +784,7 @@ function gardenProjects(garden, state, owner) {
   return [
     ...garden.calendar.events.explorers.projects(state.day, state, owner),
     ...garden.calendar.events.tables.projects(state.day, state, owner),
+    ...garden.calendar.events.memories.projects(state.day, state, owner),
   ];
 }
 
