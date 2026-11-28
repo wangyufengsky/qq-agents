@@ -16,7 +16,7 @@
 
 可用 `dream.backendId` 指定模型后端。留空时，如果只有一个专用后端（`functionalAgentOnly: true`）且已配置提供方和模型，梦境使用它。其他情况使用角色主后端。`dream.cognitive.model`、`dream.cognitive.effort` 分别覆盖角色的 `dream.model`、`dream.effort`，仍留空的字段继承所选后端。梦境配置和认知版本的变化保留现有聊天会话。
 
-`dream.cognitive.maxEventsPerBatch` 默认 120，`maxOpsPerRun` 默认 20，`timeoutMs` 默认 60000 毫秒。一次有效的空提交通知框架这批经历已整理完。失败批次保留原检查点，供后续运行读取。
+`dream.cognitive.maxEventsPerBatch` 默认 120，`maxOpsPerRun` 默认 20，`timeoutMs` 默认 10 分钟（600000 毫秒），已显式设置的时限继续生效。一次有效的空提交通知框架这批经历已整理完。失败批次保留原检查点，供后续运行读取。
 
 小憩默认要求角色空闲 15 分钟（`dream.cognitive.napIdleMs`），并积累 20 条可用新事件（`napMinEvents`）。有新纠正时，达到空闲时长即可整理。`deepDaily` 默认开启，有待整理资料时，角色进入作息睡眠或自主休息满 10 分钟后可做深度整理。未启用作息时按空闲时长触发。单个角色同时只能做一个梦。多个角色共用并发槽，`dream.budget.maxGlobalConcurrency` 默认 2，开启的角色设置了不同上限时取其中最小值。`maxRunsPerDay` 默认每角色每日 6 次。隔离模式、全局暂停和角色暂停均会阻止启动。
 
@@ -26,7 +26,9 @@
 
 ### 幻想梦
 
-在角色已开启 `dream.enabled` 时，可另开 `dream.imaginative.enabled`，默认关闭。幻想梦使用独立的一次性模型会话。后端选择沿用认知梦的路由，`dream.imaginative.model` 和 `effort` 可覆盖梦境通用设置，`timeoutMs` 默认 45000 毫秒。模型只通过 `dream_story_submit` 提交标题、故事、感想、主题和可选灵感。
+在角色已开启 `dream.enabled` 时，可另开 `dream.imaginative.enabled`，默认关闭。幻想梦使用独立的一次性模型会话。后端选择沿用认知梦的路由，`dream.imaginative.model` 和 `effort` 可覆盖梦境通用设置，`timeoutMs` 默认 10 分钟（600000 毫秒），已有显式设置继续生效。模型只通过 `dream_story_submit` 提交标题、故事、感想、主题和可选灵感。
+
+管理台「角色 → 梦境」按角色展示长期认知和幻想故事。点「证据与版本」可查认知来源，点故事标题可展开全文和灵感。「最近运行」汇总执行记录；「梦境设置」显示两种梦的实际时限、额度、阻断原因和手动运行入口。
 
 深度认知梦成功后，`dream.imaginative.probability` 控制接一场幻想梦的概率，默认 0.5。角色空闲时也有每日机会。`dream.imaginative.dailyMax` 默认 1，同时受梦境总预算与并发上限约束。「角色 → 梦境」可以手动触发幻想梦，展开标有「虚构梦境 · 非现实事件」的卡片阅读。
 

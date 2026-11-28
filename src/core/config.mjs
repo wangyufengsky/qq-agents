@@ -186,7 +186,7 @@ export const dreamConfigSchema = z
         longCognitionThreshold: dreamNumber(1, 10000, 120),
         maxEventsPerBatch: dreamNumber(1, 500, 120),
         maxOpsPerRun: dreamNumber(1, 100, 20),
-        timeoutMs: dreamNumber(1, 600000, 60000),
+        timeoutMs: dreamNumber(1, 600000, 600000),
       })
       .prefault({}),
     imaginative: z
@@ -195,7 +195,7 @@ export const dreamConfigSchema = z
         ...dreamModel,
         dailyMax: dreamNumber(1, 100, 1),
         probability: z.number().min(0).max(1).default(0.5),
-        timeoutMs: dreamNumber(1, 600000, 45000),
+        timeoutMs: dreamNumber(1, 600000, 600000),
       })
       .prefault({}),
     budget: z

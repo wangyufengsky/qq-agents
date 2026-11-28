@@ -641,6 +641,7 @@ function syncRole() {
 function renderSectionBar(section) {
   const bar = $("#section-bar");
   document.body.classList.toggle("in-role", section === "role");
+  document.body.classList.toggle("dream-page", tab === "dreams");
   if (!bar) return;
   if (!["role", "system", "transcripts"].includes(section)) {
     bar.hidden = true;
@@ -648,6 +649,24 @@ function renderSectionBar(section) {
     return;
   }
   const role = section === "role" && find("agents", roleId);
+  if (tab === "dreams") {
+    bar.hidden = false;
+    bar.innerHTML = `<div class="dream-breadcrumb"><span>角色</span><span aria-hidden="true">/</span><select aria-label="切换角色页面" id="dream-page-picker">${sections.role.pages.map((page) => `<option value="${page}" ${page === tab ? "selected" : ""}>${pageLabels[page]}</option>`).join("")}</select></div>
+      <select aria-label="选择角色" id="dream-role-picker">${config.agents.length ? "" : "<option selected disabled>尚无角色</option>"}${config.agents.map((a) => `<option value="${esc(a.id)}" ${a.id === roleId ? "selected" : ""}>${esc(a.name)}</option>`).join("")}<option value="">添加角色…</option></select>`;
+    $("#dream-page-picker").onchange = (event) => {
+      tab = event.target.value;
+      render();
+    };
+    $("#dream-role-picker").onchange = (event) => {
+      if (!event.target.value) {
+        event.target.value = roleId || "";
+        return action(() => operate("add", "agents"));
+      }
+      roleId = event.target.value;
+      render();
+    };
+    return;
+  }
   const picker =
     section !== "system"
       ? `<div class="role-pick" aria-label="选择角色">${config.agents.map((a) => `<button type="button" data-role="${esc(a.id)}" aria-pressed="${a.id === roleId}" class="${a.id === roleId ? "primary" : "ghost"}">${esc(a.name)}</button>`).join("")}${section === "role" ? `<button type="button" class="ghost" data-role-add>${icon("plus", "sm")}添加角色</button>` : ""}</div>${section === "role" ? (role ? blockersMarkup(status.agents.find((s) => s.id === role.id)) : '<p class="hint">还没有角色。</p>') : ""}`

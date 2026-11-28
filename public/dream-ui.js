@@ -50,9 +50,12 @@ async function renderDreams() {
     content.textContent = "请先添加角色。";
     return;
   }
-  content.innerHTML = `<section class="card"><h2>梦境概览</h2><div id="dream-overview">正在读取…</div><p id="dream-trigger-status" class="hint" role="status"></p></section>
-    <section class="card"><h2>长期认知</h2>
-    <form id="dream-filters" class="toolbar">
+  content.innerHTML = `<article class="dream-journal">
+    <header class="dream-cover"><h1>梦境</h1><p id="dream-cover-status" role="status">正在读取…</p></header>
+    <div class="dream-spread">
+      <section class="dream-column dream-cognitions" aria-labelledby="dream-cognitions-title">
+        <div class="dream-heading"><h2 id="dream-cognitions-title">长期认知</h2></div>
+        <details class="dream-filter" data-fold="dream-filters" ${foldOpen("dream-filters", false) ? "open" : ""}><summary>${icon("filter", "sm")}筛选</summary><form id="dream-filters" class="toolbar">
       <label>类别<select name="category"><option value="">全部类别</option>${Object.entries(
         dreamCategoryLabels,
       )
@@ -65,9 +68,17 @@ async function renderDreams() {
       <label>作用域<input name="scopeId" placeholder="global 或 group:20000"></label>
       <label>关键词<input name="query" type="search"></label>
       <button type="submit">筛选</button>
-    </form><div id="dream-list">正在读取…</div><div id="dream-detail"></div></section>
-    <section class="card"><h2>幻想梦境</h2><div id="dream-stories">正在读取…</div></section>
-    <details class="card"><summary>最近运行</summary><div id="dream-runs">正在读取…</div></details>`;
+    </form></details>
+        <div id="dream-list">正在读取…</div><div id="dream-detail"></div>
+      </section>
+      <section class="dream-column dream-fiction" aria-labelledby="dream-fiction-title">
+        <div class="dream-heading"><h2 id="dream-fiction-title">幻想梦境</h2></div>
+        <div id="dream-stories">正在读取…</div>
+      </section>
+    </div>
+    ${fold("dream-recent-runs", "最近运行", '<div id="dream-runs">正在读取…</div>', { cls: "dream-fold", summary: '<span id="dream-run-summary"></span>' })}
+    ${fold("dream-settings", "梦境设置", '<div id="dream-overview">正在读取…</div><p id="dream-trigger-status" class="hint" role="status"></p>', { cls: "dream-fold", summary: '<span id="dream-settings-summary"></span>' })}
+  </article>`;
   const active = () =>
     tab === "dreams" && roleId === agentId && content.contains(form);
   const form = $("#dream-filters");
@@ -98,6 +109,24 @@ async function renderDreams() {
         : "");
     const trackStatus = (profile, reason) =>
       profile.enabled ? reason || "可以运行" : "未开启";
+    const duration = (ms) =>
+      ms % 60000 === 0 ? `${ms / 60000} 分钟` : `${ms / 1000} 秒`;
+    $("#dream-cover-status").innerHTML = [
+      `认知梦${data.cognitive.enabled ? "已开启" : "未开启"}`,
+      `幻想梦${data.imaginative.enabled ? "已开启" : "未开启"}`,
+      blocker,
+    ]
+      .filter(Boolean)
+      .map((label) => `<span>${esc(label)}</span>`)
+      .join("");
+    $("#dream-settings-summary").innerHTML = [
+      `认知梦 ${duration(data.cognitive.timeoutMs)}`,
+      `幻想梦 ${duration(data.imaginative.timeoutMs)}`,
+      `今日 ${data.used} / ${data.limit} 次`,
+      `幻想梦最多 ${data.imaginative.limit} 次`,
+    ]
+      .map((label) => `<span>${esc(label)}</span>`)
+      .join("");
     const backend = (profile) =>
       profile.enabled
         ? ` · 后端 ${esc(profile.backendId || "—")}${profile.dedicated ? "（专用）" : ""}${profile.model ? ` · 模型 ${esc(profile.model)}` : ""}`
@@ -147,7 +176,10 @@ async function renderDreams() {
       ? data.items
           .map(
             (row, index) =>
-              `<div class="record"><p>${esc(row.content)}</p><p class="hint">${esc(dreamCategoryLabels[row.category] || row.category)} · ${esc(row.scope_id)} · ${esc(row.epistemic_status)}${row.from_private ? " · 含私聊来源" : ""}</p><button type="button" data-dream-detail="${index}">证据与版本</button></div>`,
+              `<article class="dream-entry"><span class="dream-tag">${esc(dreamCategoryLabels[row.category] || row.category)}</span>
+              <p class="dream-thought" title="${esc(row.content)}">${esc(row.content)}</p>
+              <p class="hint">${esc(row.scope_id)} · ${esc(row.epistemic_status)}${row.from_private ? " · 含私聊来源" : ""}</p>
+              <button type="button" class="dream-link" data-dream-detail="${index}">证据与版本 <span aria-hidden="true">→</span></button></article>`,
           )
           .join("")
       : '<p class="empty">暂无符合条件的认知。</p>';
@@ -182,6 +214,7 @@ async function renderDreams() {
         })
         .join("")}
       <div id="dream-evidence"></div><button type="button" id="dream-delete">彻底删除认知</button>`;
+    target.scrollIntoView({ block: "nearest" });
     target.querySelectorAll("[data-dream-source]").forEach((button) => {
       button.onclick = () =>
         action(async () => {
@@ -241,13 +274,17 @@ async function renderDreams() {
           const published = story.published_room_slot
             ? `<p class="hint">纸页小窝槽位 ${esc(story.published_room_slot)}${story.published_at ? ` · ${esc(story.published_at)}` : ""}</p>`
             : "";
-          return `<details class="record"><summary><span class="pill accent">虚构梦境 · 非现实事件</span> <strong title="${esc(story.title)}">${esc(story.title)}</strong></summary>
+          return `<details class="dream-story"><summary>
+            <span class="dream-tag">虚构梦境 · 非现实事件</span><strong class="dream-story-title" title="${esc(story.title)}">${esc(story.title)}</strong>
+            <span class="dream-excerpt">${esc(story.narrative)}</span>
+            <span class="dream-link"><span class="dream-read">展开梦境</span><span class="dream-close">收起梦境</span> <span aria-hidden="true">→</span></span>
+          </summary><div class="dream-story-body">
           <p class="hint">${esc(story.created_at)}</p>
           <h4>故事</h4><p>${esc(story.narrative)}</p>
           <h4>感想</h4><p>${esc(story.reflection)}</p>
           ${themes.length ? `<p><strong>主题</strong> · ${esc(themes.join("、"))}</p>` : ""}
           ${inspirations.length ? `<h4>梦里的灵感</h4><ul>${inspirations.map(({ kind, content }) => `<li><strong>${esc(dreamInspirationLabels[kind] || kind)}</strong> · ${esc(content)}</li>`).join("")}</ul>` : ""}
-          ${published}</details>`;
+          ${published}</div></details>`;
         })
         .join("") || '<p class="empty">暂无幻想梦境。</p>';
   }
@@ -273,6 +310,10 @@ async function renderDreams() {
   async function runs() {
     const data = await api("/api/dreams/runs?" + roleQuery);
     if (!active()) return;
+    const latest = data.items[0];
+    $("#dream-run-summary").textContent = latest
+      ? `${dreamModeLabels[latest.mode] || latest.mode} · ${dreamStatusLabels[latest.status] || latest.status}`
+      : "暂无记录";
     $("#dream-runs").innerHTML =
       data.items
         .map((run) => {

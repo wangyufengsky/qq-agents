@@ -144,7 +144,7 @@
           "longCognitionThreshold": 120,
           "maxEventsPerBatch": 120,
           "maxOpsPerRun": 20,
-          "timeoutMs": 60000
+          "timeoutMs": 600000
         },
         "imaginative": {
           "enabled": false,
@@ -152,7 +152,7 @@
           "effort": null,
           "dailyMax": 1,
           "probability": 0.5,
-          "timeoutMs": 45000
+          "timeoutMs": 600000
         },
         "budget": {
           "maxRunsPerDay": 6,
@@ -301,7 +301,7 @@
           "longCognitionThreshold": 120,
           "maxEventsPerBatch": 120,
           "maxOpsPerRun": 20,
-          "timeoutMs": 60000
+          "timeoutMs": 600000
         },
         "imaginative": {
           "enabled": false,
@@ -309,7 +309,7 @@
           "effort": null,
           "dailyMax": 1,
           "probability": 0.5,
-          "timeoutMs": 45000
+          "timeoutMs": 600000
         },
         "budget": {
           "maxRunsPerDay": 6,
