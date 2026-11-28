@@ -71,9 +71,10 @@ export async function dreamAdmin(runtime, method, url, readBody) {
       const daily = dreamDaily(runtime, agent);
       return send({
         ...(cognitive.enabled ? cognitive : imaginative),
-        cognitive,
+        cognitive: { ...cognitive, timeoutMs: agent.dream.cognitive.timeoutMs },
         imaginative: {
           ...imaginative,
+          timeoutMs: agent.dream.imaginative.timeoutMs,
           used: daily.imaginativeUsed,
           limit: agent.dream.imaginative.dailyMax,
         },

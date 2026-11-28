@@ -12,6 +12,7 @@ test("administrator can trigger and read fictional stories for an imaginative-on
   role.dream.cognitive.enabled = false;
   role.dream.imaginative.enabled = true;
   role.dream.imaginative.model = "fixture-story-model";
+  role.dream.imaginative.timeoutMs = 45000;
   other.dream.enabled = true;
   other.dream.cognitive.model = "fixture-cognition-model";
   other.dream.imaginative.enabled = true;
@@ -73,15 +74,18 @@ test("administrator can trigger and read fictional stories for an imaginative-on
   const before = await get("overview");
   assert.equal(before.enabled, true);
   assert.equal(before.cognitive.enabled, false);
+  assert.equal(before.cognitive.timeoutMs, 600000);
   assert.deepEqual(before.imaginative, {
     enabled: true,
     backendId: role.backendId,
     model: role.dream.imaginative.model,
     dedicated: false,
+    timeoutMs: 45000,
     used: 0,
     limit: 1,
   });
   const otherOverview = await get("overview", "?agentId=" + other.id);
+  assert.equal(otherOverview.imaginative.timeoutMs, 600000);
   assert.equal(otherOverview.cognitive.model, other.dream.cognitive.model);
   assert.equal(otherOverview.imaginative.model, other.dream.imaginative.model);
   assert.equal(otherOverview.cognitive.backendId, backend.id);

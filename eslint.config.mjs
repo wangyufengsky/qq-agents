@@ -32,6 +32,7 @@ const browserScripts = {
     "fillIds",
     "find",
     "fold",
+    "foldOpen",
     "icon",
     "ids",
     "input",

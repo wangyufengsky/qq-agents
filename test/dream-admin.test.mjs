@@ -53,6 +53,17 @@ test("administrator alone can read, trigger, filter, roll back, pause and delete
     200,
   );
 
+  for (const [asset, type] of [
+    ["/dream.css", "text/css"],
+    ["/dream-art/moon-lake.webp", "image/webp"],
+    ["/dream-art/paper-boat.webp", "image/webp"],
+    ["/dream-art/shore.webp", "image/webp"],
+  ]) {
+    const assetResponse = await request(asset, { credential: null });
+    assert.equal(assetResponse.status, 200);
+    assert.ok(assetResponse.headers.get("content-type").startsWith(type));
+  }
+
   const memory = f.store.bind(role);
   const event = memory.append({
     dedupe: "admin-source",

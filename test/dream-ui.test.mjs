@@ -19,6 +19,7 @@ test("a completed cognitive run refreshes the selected page and filters", async 
       nodes.set(id, {
         contains: () => true,
         replaceChildren() {},
+        scrollIntoView() {},
         insertAdjacentHTML() {},
         querySelectorAll: (selector) => buttons[selector] ?? [],
       });
@@ -33,8 +34,10 @@ test("a completed cognitive run refreshes the selected page and filters", async 
     }
     if (url.includes("/overview"))
       return {
-        cognitive: { enabled: true },
-        imaginative: { enabled: false },
+        cognitive: { enabled: true, timeoutMs: 600000 },
+        imaginative: { enabled: false, timeoutMs: 45000, limit: 1 },
+        used: 1,
+        limit: 6,
         lag: {},
       };
     if (url.includes("/revisions?"))
@@ -68,6 +71,10 @@ test("a completed cognitive run refreshes the selected page and filters", async 
     api,
     action: (fn) => fn(),
     esc: String,
+    icon: () => "",
+    foldOpen: () => false,
+    fold: (id, title, body) =>
+      `<details data-fold="${id}"><summary>${title}</summary>${body}</details>`,
     readMemory: (id, options) =>
       reads.push([id, options.agentId, options.revision]),
     URLSearchParams,
@@ -82,6 +89,17 @@ test("a completed cognitive run refreshes the selected page and filters", async 
     context,
   );
   await vm.runInContext("renderDreams()", context);
+  const page = get("#content").innerHTML;
+  assert.ok(page.indexOf("长期认知") < page.indexOf("最近运行"));
+  assert.ok(page.indexOf("幻想梦境") < page.indexOf("梦境设置"));
+  assert.match(
+    get("#dream-cover-status").innerHTML,
+    /认知梦已开启.*幻想梦未开启/,
+  );
+  assert.match(
+    get("#dream-settings-summary").innerHTML,
+    /认知梦 10 分钟.*幻想梦 45 秒/,
+  );
   await get("#dream-next").onclick();
   await button.onclick();
   assert.equal(requests.length, 3);
