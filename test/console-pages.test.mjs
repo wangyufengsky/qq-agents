@@ -489,3 +489,26 @@ for (const helper of [
     assert.notEqual(c.node("#editor").open, true);
     assert.doesNotMatch(c.node("#edit-fields").innerHTML || "", /旧角色迟到/);
   });
+
+test("dreams have a primary navigation entry and select a role independently of role subpages", async (t) => {
+  const f = fixture(t);
+  const c = await consolePage(t, f);
+  assert.equal(c.run('sectionOf("dreams")'), "dreams");
+  assert.ok(!c.run('sections.role.pages.includes("dreams")'));
+  const shell = fs.readFileSync(
+    new URL("../public/index.html", import.meta.url),
+    "utf8",
+  );
+  assert.match(shell, /data-section="dreams"[^>]*>[\s\S]*?<span>梦境<\/span>/);
+  c.run(
+    'tab="dreams"; roleId="missing"; syncRole(); config.agents[0].paused=true; renderSectionBar(sectionOf(tab));',
+  );
+  const bar = c.node("#section-bar");
+  assert.equal(bar.hidden, false);
+  assert.match(
+    bar.innerHTML,
+    /data-role="agent-0" role="tab"[^>]*aria-selected="true"/,
+  );
+  assert.match(bar.innerHTML, /dream-role-paused">暂停/);
+  assert.doesNotMatch(bar.innerHTML, /<select|data-role-add|data-page=/);
+});

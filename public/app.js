@@ -46,7 +46,7 @@ const titles = {
   mind: ["Self", "身份锚点、当前 self、成长候选与版本历史。"],
   mood: ["心情", "角色自己记下的当前心情、强度变化和每一次变化的原因。"],
   people: ["人物卡", "角色对每个人的称呼、关系与印象，以及每一版的改动。"],
-  dreams: ["梦境", "查看长期认知、休息时的整理和近期运行。"],
+  dreams: ["梦境", "查看各个角色在梦里整理的认知与写下的故事。"],
   projects: ["项目与活动", "持续推进的事情、共同原稿与作品历史。"],
   subject: ["空闲时间", "空闲时间的检查状态、日志，以及检查与联系的设置。"],
   intents: ["主动联系", "空闲时间里想主动找人留下的意图，以及最后的结果。"],
@@ -563,6 +563,7 @@ const homeRolesMarkup = () =>
 const sections = {
   home: { pages: ["overview"] },
   garden: { pages: ["garden"] },
+  dreams: { pages: ["dreams"] },
   role: {
     pages: [
       "activity",
@@ -573,7 +574,6 @@ const sections = {
       "memory",
       "diary",
       "visits",
-      "dreams",
       "subject",
       "projects",
       "intents",
@@ -641,48 +641,58 @@ function syncRole() {
 function renderSectionBar(section) {
   const bar = $("#section-bar");
   document.body.classList.toggle("in-role", section === "role");
-  document.body.classList.toggle("dream-page", tab === "dreams");
   if (!bar) return;
-  if (!["role", "system", "transcripts"].includes(section)) {
+  if (!["role", "system", "transcripts", "dreams"].includes(section)) {
     bar.hidden = true;
     bar.innerHTML = "";
     return;
   }
   const role = section === "role" && find("agents", roleId);
-  if (tab === "dreams") {
-    bar.hidden = false;
-    bar.innerHTML = `<div class="dream-breadcrumb"><span>角色</span><span aria-hidden="true">/</span><select aria-label="切换角色页面" id="dream-page-picker">${sections.role.pages.map((page) => `<option value="${page}" ${page === tab ? "selected" : ""}>${pageLabels[page]}</option>`).join("")}</select></div>
-      <select aria-label="选择角色" id="dream-role-picker">${config.agents.length ? "" : "<option selected disabled>尚无角色</option>"}${config.agents.map((a) => `<option value="${esc(a.id)}" ${a.id === roleId ? "selected" : ""}>${esc(a.name)}</option>`).join("")}<option value="">添加角色…</option></select>`;
-    $("#dream-page-picker").onchange = (event) => {
-      tab = event.target.value;
-      render();
-    };
-    $("#dream-role-picker").onchange = (event) => {
-      if (!event.target.value) {
-        event.target.value = roleId || "";
-        return action(() => operate("add", "agents"));
-      }
-      roleId = event.target.value;
-      render();
-    };
-    return;
-  }
+  const dreamTabs = section === "dreams";
+  const roleButtons = config.agents
+    .map((agent) => {
+      const selected = agent.id === roleId;
+      const state = dreamTabs
+        ? `role="tab" id="dream-role-${esc(agent.id)}" aria-controls="dream-panel" aria-selected="${selected}" tabindex="${selected ? 0 : -1}"`
+        : `aria-pressed="${selected}"`;
+      const paused =
+        dreamTabs && agent.paused
+          ? ' <span class="dream-role-paused">暂停</span>'
+          : "";
+      return `<button type="button" data-role="${esc(agent.id)}" ${state} class="${selected ? "primary" : "ghost"}">${esc(agent.name)}${paused}</button>`;
+    })
+    .join("");
   const picker =
     section !== "system"
-      ? `<div class="role-pick" aria-label="选择角色">${config.agents.map((a) => `<button type="button" data-role="${esc(a.id)}" aria-pressed="${a.id === roleId}" class="${a.id === roleId ? "primary" : "ghost"}">${esc(a.name)}</button>`).join("")}${section === "role" ? `<button type="button" class="ghost" data-role-add>${icon("plus", "sm")}添加角色</button>` : ""}</div>${section === "role" ? (role ? blockersMarkup(status.agents.find((s) => s.id === role.id)) : '<p class="hint">还没有角色。</p>') : ""}`
+      ? `<div class="role-pick" role="${dreamTabs ? "tablist" : "group"}" aria-label="选择角色">${roleButtons}${section === "role" ? `<button type="button" class="ghost" data-role-add>${icon("plus", "sm")}添加角色</button>` : ""}</div>${section === "role" ? (role ? blockersMarkup(status.agents.find((s) => s.id === role.id)) : '<p class="hint">还没有角色。</p>') : ""}`
       : "";
   bar.innerHTML =
-    section === "transcripts"
+    sections[section].pages.length === 1
       ? picker
       : `${picker}<div class="sub-tabs" role="tablist">${sections[section].pages.map((p) => `<button type="button" role="tab" data-page="${p}" aria-selected="${p === tab}" class="${p === tab ? "active" : ""}">${pageLabels[p]}</button>`).join("")}</div>`;
   bar.hidden = false;
-  bar.querySelectorAll?.("[data-role]").forEach(
-    (b) =>
-      (b.onclick = () => {
-        roleId = b.dataset.role;
-        render();
-      }),
-  );
+  const roleElements = Array.from(bar.querySelectorAll?.("[data-role]") || []);
+  roleElements.forEach((button, index) => {
+    button.onclick = () => {
+      roleId = button.dataset.role;
+      render();
+      if (dreamTabs)
+        bar.querySelector('[role="tab"][aria-selected="true"]').focus();
+    };
+    if (dreamTabs)
+      button.onkeydown = (event) => {
+        const count = roleElements.length;
+        const next = {
+          ArrowLeft: (index + count - 1) % count,
+          ArrowRight: (index + 1) % count,
+          Home: 0,
+          End: count - 1,
+        }[event.key];
+        if (next === undefined) return;
+        event.preventDefault();
+        roleElements[next].click();
+      };
+  });
   bar.querySelectorAll?.("[data-page]").forEach(
     (b) =>
       (b.onclick = () => {
@@ -715,7 +725,7 @@ function render() {
   const section = sectionOf(tab);
   lastPage[section] = tab;
   if (tab !== "overview") homeShown = false;
-  if (["role", "transcripts"].includes(section) && config) syncRole();
+  if (["role", "transcripts", "dreams"].includes(section) && config) syncRole();
   const role = section === "role" && config && find("agents", roleId);
   const [pageTitle, subtitle] = titles[tab];
   const title = role ? `${role.name} · ${pageLabels[tab]}` : pageTitle;

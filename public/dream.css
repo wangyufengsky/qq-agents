@@ -1,256 +1,129 @@
-/* The journal changes the console shell only while the dream page is open. */
-.dream-page {
-  --journal-paper: #f5edde;
-  --journal-ink: #202e2d;
-  --journal-rule: #b9aa8a;
-  --journal-serif:
-    "Songti SC", "Noto Serif CJK SC", "STSong", "SimSun", Georgia, serif;
-}
-.dream-page > aside {
-  background: #102e37;
-  color: #f4e9d2;
-  box-shadow: inset -1px 0 #435856;
-}
-.dream-page aside .brand-name {
-  background: none;
-  color: #fff1d9;
-  font:
-    600 1.5rem/1.3 Georgia,
-    serif;
-}
-.dream-page aside .mark {
-  display: none;
-}
-.dream-page aside .brand small,
-.dream-page aside nav :is(button, a),
-.dream-page aside .runtime-label {
-  color: #e1d8c1;
-}
-.dream-page aside nav :is(button, a) {
-  border-radius: 3px;
-}
-.dream-page aside nav button.active {
-  background: #eee0c6;
-  box-shadow: inset 0 0 0 1px #c6a976;
-  color: #19323a;
-}
-.dream-page aside nav button.active::before {
-  display: none;
-}
-.dream-page main {
-  color-scheme: light;
-  --ink: var(--journal-ink);
-  --ink-2: #324140;
-  --ink-strong: #15292b;
-  --sub: #455150;
-  --muted: #565c54;
-  --faint: #67675a;
-  --accent: #315f66;
-  --accent-line: #819799;
-  --focus-line: #316b75;
-  --line: #c6baa0;
-  --line-2: #b5a88f;
-  --raised: #f6efdf;
-  --panel: #f4eddf;
-  --bg-sunken: #fffaf0;
-  --fill-2: #00000003;
-  --fill-3: #00000007;
-  --fill-4: #0000000b;
-  --danger: #83332d;
-  --ok: #32624d;
-  --warn: #765015;
-  --scrollbar: #998d73;
-  color: var(--ink);
-  background: var(--journal-paper);
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  grid-template-rows: auto 1fr;
-  align-content: start;
-  padding: 0 0 3rem;
-}
-.dream-page main::before {
-  display: none;
-}
-.dream-page main > header,
-.dream-page #section-bar,
-.dream-page #content {
-  max-width: none;
-  width: 100%;
-  margin: 0;
-}
-.dream-page main > header {
-  grid-area: 1 / 2;
-  padding: 10px clamp(14px, 2vw, 30px) 10px 0;
-  align-items: center;
-  justify-content: center;
-  box-shadow: none;
-}
-.dream-page .header-text {
-  display: none;
-}
-.dream-page #section-bar {
-  grid-area: 1 / 1;
-  padding: 12px clamp(12px, 2vw, 30px);
-  display: flex;
-  align-items: center;
-  gap: clamp(10px, 2vw, 30px);
-  flex-wrap: wrap;
-}
-.dream-breadcrumb {
-  display: flex;
-  align-items: center;
-  gap: 0.65em;
-  font: 600 1.12rem var(--journal-serif);
-}
-.dream-page #section-bar select {
-  width: auto;
-  max-width: 100%;
-  border: 1px solid var(--journal-rule);
-  background-color: #fff9eb;
+.dream-role-paused {
+  font-size: 10px;
+  line-height: 15px;
+  padding: 0 4px;
+  border: 1px solid var(--warn-line);
   border-radius: 4px;
+  color: var(--warn);
 }
-.dream-page #section-bar #dream-page-picker {
-  border-color: transparent;
-  background-color: transparent;
-  font: inherit;
-}
-.dream-page #content {
-  grid-column: 1/-1;
-  min-width: 0;
+.primary .dream-role-paused {
+  color: #714b20;
+  border-color: #af8a5e;
 }
 .dream-journal {
-  margin: auto;
-  background: #f6eee0 url("/garden-art/paper.webp") repeat;
-  background-blend-mode: soft-light;
-  border-block: 1px solid var(--journal-rule);
+  --journal-serif:
+    "Songti SC", "Noto Serif CJK SC", "STSong", "SimSun", Georgia, serif;
+  --journal-cream: #e9d9bb;
 }
 .dream-cover {
-  min-height: clamp(210px, 22vw, 350px);
+  min-height: 164px;
+  padding: 22px 29px;
   display: flex;
   flex-direction: column;
-  justify-content: center;
   align-items: flex-start;
-  padding: clamp(24px, 4.5vw, 82px);
-  color: #fff1d8;
-  background: #102e37 url("/dream-art/moon-lake.webp") center 54% / cover
-    no-repeat;
+  justify-content: center;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-lg);
+  background:
+    linear-gradient(
+      90deg,
+      #0f151dfa 0%,
+      #0f161ee8 23%,
+      #0f161e80 42%,
+      transparent 68%
+    ),
+    #131b23 url("/dream-art/moon-lake.webp") center 51% / cover no-repeat;
 }
-.dream-page aside nav button.active svg.i {
-  color: #3c5356;
-}
-.dream-filter > summary::before,
-.dream-story > summary::before {
-  display: none;
-}
+.dream-owner,
 #dream-cover-status,
-#dream-settings-summary {
+#dream-settings-summary,
+.dream-heading,
+.dream-heading h2,
+.dream-pager {
   display: flex;
-  flex-wrap: wrap;
-  column-gap: 0.6em;
-  align-items: baseline;
+  align-items: center;
+  gap: 8px;
 }
-#dream-cover-status span,
-#dream-settings-summary span {
-  white-space: nowrap;
+.dream-owner {
+  color: #becbd5;
+  font-size: 12px;
 }
-#dream-cover-status span + span::before,
-#dream-settings-summary span + span::before {
-  content: "·";
-  margin-right: 0.6em;
+.dream-cover h2 {
+  font: 600 34px/1.4 var(--journal-serif);
+  letter-spacing: 2px;
+  color: #f2e7d4;
+  margin: 4px 0 10px;
 }
-.dream-cover h1 {
-  font: 600 clamp(44px, 5.2vw, 84px)/1.15 var(--journal-serif);
-  color: inherit;
+#dream-cover-status {
   margin: 0;
-  letter-spacing: 0.12em;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  font-size: 12px;
+  color: #d4dce1;
 }
-.dream-cover p {
-  max-width: 56%;
-  margin: 0.9rem 0 0;
-  font: 500 clamp(13px, 1.15vw, 18px)/1.75 var(--journal-serif);
-  color: #fff3dd;
-  text-shadow: 0 1px 5px #082127;
+#dream-cover-status span::before {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 100%;
+  background: currentColor;
+  margin: 0 6px 2px 0;
+}
+#dream-cover-status .enabled::before {
+  color: #97b9a9;
+}
+#dream-cover-status .blocked {
+  color: #edce97;
 }
 .dream-spread {
   display: grid;
-  grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr);
-  padding: clamp(18px, 2.5vw, 40px) 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 16px;
+  margin: 18px 0;
 }
 .dream-column {
   min-width: 0;
-  min-height: 310px;
-  padding: 0 clamp(16px, 2.7vw, 46px) 28px;
-  position: relative;
-  isolation: isolate;
+  padding: 20px 22px 18px;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-lg);
+  background: var(--surface);
   overflow-wrap: anywhere;
-}
-.dream-column::before {
-  content: "";
-  position: absolute;
-  pointer-events: none;
-  z-index: -1;
-  background-size: contain;
-  background-repeat: no-repeat;
-  mix-blend-mode: multiply;
-}
-.dream-cognitions {
-  border-right: 1px solid var(--journal-rule);
-}
-.dream-cognitions::before {
-  width: clamp(100px, 13vw, 200px);
-  aspect-ratio: 330/154;
-  left: 0;
-  bottom: -12px;
-  background-image: url("/dream-art/shore.webp");
-  opacity: 0.65;
-  mask-image:
-    linear-gradient(to top, #000 55%, transparent),
-    linear-gradient(to right, #000 65%, transparent);
-  mask-composite: intersect;
-}
-.dream-fiction::before {
-  width: clamp(96px, 12.5vw, 200px);
-  aspect-ratio: 294/218;
-  right: 14px;
-  top: 0.25rem;
-  background-image: url("/dream-art/paper-boat.webp");
-  mask-image: radial-gradient(ellipse, #000 48%, transparent 74%);
+  position: relative;
 }
 .dream-heading {
-  border-bottom: 1px solid var(--journal-rule);
-  margin-bottom: 1.2rem;
-  padding-bottom: 0.8rem;
+  justify-content: space-between;
+  margin-bottom: 14px;
+  min-height: 27px;
 }
 .dream-heading h2 {
-  font: 600 clamp(24px, 2.1vw, 36px)/1.3 var(--journal-serif);
+  font-size: 17px;
   margin: 0;
-  color: var(--ink);
+}
+.dream-heading .i {
+  color: #b8c9d7;
+}
+.dream-fiction .dream-heading .i {
+  color: var(--journal-cream);
 }
 .dream-cognitions .dream-heading {
-  padding-right: 82px;
-}
-.dream-fiction .dream-heading {
-  margin-right: 27%;
-}
-.dream-journal summary {
-  cursor: pointer;
+  padding-right: 66px;
 }
 .dream-filter {
   margin: 0;
 }
 .dream-filter > summary {
   position: absolute;
-  right: clamp(16px, 2.7vw, 46px);
-  top: 0;
-  display: flex;
-  gap: 0.4em;
-  align-items: center;
-  border: 1px solid var(--journal-rule);
-  padding: 5px 10px;
-  border-radius: 4px;
+  right: 20px;
+  top: 22px;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 0;
 }
-.dream-filter summary::-webkit-details-marker,
-.dream-story summary::-webkit-details-marker {
+.dream-filter > summary::before,
+.dream-story > summary::before {
   display: none;
 }
 .dream-filter form {
@@ -259,45 +132,31 @@
   gap: 8px;
   margin: 0 0 1rem;
 }
-.dream-filter label {
-  min-width: 0;
-}
+.dream-filter label,
 .dream-filter :is(input, select) {
-  width: 100%;
   min-width: 0;
-}
-.dream-journal :is(input, select, button, .ghost) {
-  background-color: #f9f3e8;
-  color: var(--ink);
-  border-color: var(--journal-rule);
-}
-.dream-journal button:disabled {
-  opacity: 0.55;
-}
-.dream-entry,
-.dream-story {
-  margin: 0;
-  padding: 14px 0 15px;
+  width: 100%;
 }
 .dream-entry + .dream-entry,
 .dream-story + .dream-story {
-  border-top: 1px solid #cfc2a8;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+  margin-top: 12px;
 }
 .dream-tag {
   display: inline-block;
-  font-size: 12px;
-  line-height: 1.5;
-  padding: 2px 8px;
-  background: #ecdfc4;
-  border: 1px solid #bda67e;
-  border-radius: 3px;
-  color: #4d422d;
+  font-size: 11px;
+  color: #b5c4d6;
+  background: #1a222c;
+  border-radius: 4px;
+  padding: 1px 6px;
 }
-.dream-thought,
-.dream-story-title {
-  margin: 0.6em 0 0.25em;
-  font: 600 clamp(18px, 1.55vw, 25px)/1.55 var(--journal-serif);
-  color: var(--journal-ink);
+.dream-thought {
+  font-size: 16px;
+  line-height: 1.55;
+  font-weight: 500;
+  color: var(--ink);
+  margin: 5px 0;
 }
 .dream-thought,
 .dream-excerpt {
@@ -306,40 +165,86 @@
   -webkit-line-clamp: 2;
   overflow: hidden;
 }
+.dream-entry .hint {
+  font-size: 12px;
+  margin: 3px 0;
+}
+.dream-entry .dream-link,
+.dream-story .dream-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  border-radius: 4px;
+  margin: 3px 0 0;
+  padding: 3px 0;
+  font-size: 12px;
+  min-height: 26px;
+}
+.dream-detail:not(:empty) {
+  border-left: 2px solid var(--line-2);
+  padding: 10px 0 10px 12px;
+  margin: 8px 0;
+}
+.dream-detail pre {
+  white-space: pre-wrap;
+}
+.dream-pager {
+  flex-wrap: wrap;
+  justify-content: space-between;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+  margin-top: 14px;
+}
+.dream-pager span,
+.dream-themes {
+  color: var(--muted);
+  font-size: 12px;
+}
+.dream-story {
+  margin: 0;
+}
+.dream-story > summary {
+  display: block;
+  padding: 0;
+}
+.dream-fiction .dream-tag {
+  color: var(--journal-cream);
+  background: transparent;
+  padding: 0;
+}
+.dream-fiction .dream-tag::before {
+  content: "";
+  display: inline-block;
+  width: 15px;
+  height: 1px;
+  background: #9f8d70;
+  margin: 0 7px 3px 0;
+}
 .dream-story-title {
   display: block;
+  font: 600 24px/1.48 var(--journal-serif);
+  color: #ede3d2;
+  margin: 10px 0 5px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.dream-fiction .dream-story:first-child > summary {
-  padding-right: clamp(28px, 5vw, 90px);
-}
-.dream-story > summary {
-  display: block;
-}
 .dream-excerpt,
 .dream-story-body p {
-  font: 400 clamp(15px, 1.15vw, 18px)/1.85 var(--journal-serif);
-  color: #394540;
+  font: 400 15px/1.9 var(--journal-serif);
+  color: #c9c6c4;
 }
-.dream-journal .dream-link {
-  display: inline-flex;
-  gap: 0.7em;
-  align-items: center;
-  font-size: 0.92rem;
-  color: #254c50;
-  font-weight: 600;
-  background: none;
-  border: 0;
-  border-bottom: 1px solid #82938a;
-  border-radius: 0;
-  padding: 0;
-  margin: 0.65rem 0 0;
-  min-height: 28px;
+.dream-story .dream-link {
+  color: var(--journal-cream);
 }
-.dream-link:hover {
-  color: #181f1f;
+.dream-themes {
+  display: block;
+  margin-top: 15px;
+  border-top: 1px solid var(--line);
+  padding-top: 11px;
 }
 .dream-close,
 .dream-story[open] .dream-read,
@@ -352,125 +257,67 @@
 .dream-story[open] .dream-story-title {
   white-space: normal;
 }
-.dream-story-body {
-  padding: 0.75em 0;
-}
-.dream-story-body h4 {
-  margin: 1rem 0 0.25rem;
-}
 .dream-story-body p {
-  margin: 0.2em 0;
   white-space: pre-wrap;
 }
 .dream-journal .empty {
   border: 0;
   background: transparent;
   text-align: left;
-  color: var(--muted);
   padding: 18px 0;
-}
-.dream-journal .record,
-#dream-detail pre {
-  overflow-wrap: anywhere;
-  max-width: 100%;
-}
-#dream-detail pre {
-  white-space: pre-wrap;
-}
-.dream-fold.card {
   margin: 0;
-  padding: 0 clamp(16px, 2.7vw, 46px);
-  border: 0;
-  border-top: 1px solid var(--journal-rule);
-  border-radius: 0;
-  box-shadow: none;
-  background: transparent;
-}
-.dream-fold > summary {
-  padding: 14px 0;
 }
 .dream-fold .fold-title {
-  color: var(--ink);
-  font: 600 1.12rem var(--journal-serif);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.dream-fold .fold-title .i {
+  color: var(--sub);
+}
+.dream-fold.card {
+  padding: 12px 17px;
+  margin: 9px 0;
+  background: var(--surface);
+}
+#dream-settings-summary {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 2px 8px;
 }
 .dream-fold .fold-summary {
-  color: var(--muted);
-  overflow-wrap: anywhere;
+  margin-left: auto;
+  white-space: normal;
 }
-.dream-fold .fold-body {
-  padding: 0 0 16px;
-}
-@media (min-width: 721px) {
-  .dream-page > aside {
-    padding-top: clamp(22px, 3vw, 44px);
-    background:
-      linear-gradient(180deg, #0c2730 42%, #0c2730e6 73%, #0c2730ab),
-      url("/dream-art/moon-lake.webp") 13% bottom / auto 55% no-repeat,
-      #0c2730;
-  }
-  .dream-page aside nav {
-    gap: 6px;
-  }
-  .dream-page aside nav :is(button, a) {
-    min-height: 43px;
-  }
-  .dream-page aside .brand {
-    padding-bottom: 32px;
-  }
-}
-@media (max-width: 860px) {
+@media (max-width: 980px) {
   .dream-spread {
     grid-template-columns: minmax(0, 1fr);
   }
   .dream-column {
-    min-height: 0;
-    padding-bottom: 32px;
+    padding: 17px 18px;
   }
-  .dream-cognitions {
-    border: 0;
-    border-bottom: 1px solid var(--journal-rule);
-    margin-bottom: 22px;
-  }
-  .dream-cognitions::before {
-    bottom: 0;
-    opacity: 0.42;
+  .dream-filter > summary {
+    right: 17px;
+    top: 19px;
   }
 }
 @media (max-width: 720px) {
-  .dream-page main {
-    display: block;
-  }
-  .dream-page main > header {
-    align-items: flex-end;
-    padding: 6px 12px 0;
-  }
-  .dream-page main > header .header-actions {
-    gap: 5px;
-  }
-  .dream-page #section-bar {
-    padding: 8px 12px;
-    justify-content: space-between;
-  }
-  .dream-page aside .brand {
-    padding-bottom: 5px;
-  }
-  .dream-page aside .brand-name {
-    font-size: 1.1rem;
-  }
   .dream-cover {
-    min-height: 190px;
-    padding: 20px 16px;
-    background-position: 67% center;
+    min-height: 139px;
+    padding: 18px;
+    background-position: 66% center;
+    background-image:
+      linear-gradient(90deg, #0f151df0, #0f151dad 46%, #0f151d0d),
+      url("/dream-art/moon-lake.webp");
   }
-  .dream-cover p {
-    max-width: 49%;
-    font: 500 13px/1.6 var(--font);
+  .dream-cover h2 {
+    font-size: 28px;
+  }
+  .dream-spread {
+    gap: 12px;
+    margin: 12px 0;
   }
   .dream-fold .fold-summary {
     display: block;
-    white-space: normal;
-  }
-  .dream-page #notice {
-    max-width: calc(100vw - 24px);
   }
 }

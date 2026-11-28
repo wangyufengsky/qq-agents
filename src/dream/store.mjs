@@ -153,11 +153,12 @@ export function startDream(
   });
 }
 
-/** @param {Database} db @param {string} agentId @param {{scopeId?:string,category?:string,status?:string,query?:string,offset?:number,limit?:number}} [filters] */
-export function listCognitions(
-  db,
+/** @typedef {{scopeId?:string,category?:string,status?:string,query?:string,offset?:number,limit?:number}} CognitionFilters */
+
+/** @param {string} agentId @param {CognitionFilters} filters */
+function cognitionFilter(
   agentId,
-  { scopeId, category, status = "active", query, offset = 0, limit = 20 } = {},
+  { scopeId, category, status = "active", query },
 ) {
   const where = ["agent_id=?", "status=?"];
   const params = [agentId, status];
@@ -175,13 +176,40 @@ export function listCognitions(
     );
     params.push(query, query);
   }
+  return { where: where.join(" AND "), params };
+}
+
+/** @param {Database} db @param {string} agentId @param {CognitionFilters} [filters] */
+export function listCognitions(db, agentId, filters = {}) {
+  const { where, params } = cognitionFilter(agentId, filters);
+  const { limit = 20, offset = 0 } = filters;
   return /** @type {Cognition[]} */ (
     prepared(
       db,
-      `SELECT * FROM cognitions WHERE ${where.join(" AND ")}
+      `SELECT * FROM cognitions WHERE ${where}
     ORDER BY importance DESC, updated_at DESC, id LIMIT ? OFFSET ?`,
     ).all(...params, limit, offset)
   );
+}
+
+/** @param {Database} db @param {string} agentId @param {CognitionFilters & {offset:number, limit:number}} filters */
+export function cognitionHistoryPage(db, agentId, filters) {
+  const { where, params } = cognitionFilter(agentId, filters);
+  const { offset, limit } = filters;
+  const total = Number(
+    prepared(db, `SELECT count(*) AS total FROM cognitions WHERE ${where}`).get(
+      ...params,
+    )?.total,
+  );
+  const items = prepared(
+    db,
+    `SELECT * FROM cognitions WHERE ${where} ORDER BY updated_at DESC, id LIMIT ? OFFSET ?`,
+  ).all(...params, limit, offset);
+  return {
+    items,
+    total,
+    nextOffset: offset + limit < total ? offset + limit : null,
+  };
 }
 
 /** @param {Database} db @param {Cognition} row @param {(id:string,revision?:number) => Source|null|undefined} read */
