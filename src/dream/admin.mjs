@@ -5,7 +5,7 @@ import { dreamAgentProfile } from "../core/functional-agents.mjs";
 import { dreamDaily, dreamLag, dreamPaused } from "./scheduler.mjs";
 import {
   deleteCognition,
-  listCognitions,
+  cognitionHistoryPage,
   rollbackCognition,
 } from "./store.mjs";
 import { category, scopeId } from "./validator.mjs";
@@ -92,15 +92,7 @@ export async function dreamAdmin(runtime, method, url, readBody) {
       const agent = agentFromQuery();
       const { agentId: _ignored, ...query } = params;
       const filters = queryOptions.parse(query);
-      const rows = listCognitions(db, agent.id, {
-        ...filters,
-        limit: filters.limit + 1,
-      });
-      return send({
-        items: rows.slice(0, filters.limit),
-        nextOffset:
-          rows.length > filters.limit ? filters.offset + filters.limit : null,
-      });
+      return send(cognitionHistoryPage(db, agent.id, filters));
     }
     if (method === "GET" && path === "/api/dreams/correction") {
       const agent = agentFromQuery();

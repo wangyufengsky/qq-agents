@@ -35,6 +35,15 @@ const dreamPendingStatuses = new Set([
   "VALIDATING",
   "RETRY_WAIT",
 ]);
+const dreamEvidenceLabels = {
+  observed: "直接观察",
+  reported: "转述",
+  inferred: "推断",
+  subjective: "主观感受",
+  planned: "计划",
+  disputed: "有争议",
+  fictional: "虚构",
+};
 const dreamCategoryLabels = {
   fact: "事实归纳",
   preference: "稳定偏好",
@@ -47,14 +56,14 @@ async function renderDreams() {
   const agentId = roleId;
   const content = $("#content");
   if (!agentId) {
-    content.textContent = "请先添加角色。";
+    content.textContent = "请先到「角色」添加角色。";
     return;
   }
-  content.innerHTML = `<article class="dream-journal">
-    <header class="dream-cover"><h1>梦境</h1><p id="dream-cover-status" role="status">正在读取…</p></header>
+  content.innerHTML = `<article class="dream-journal" role="tabpanel" id="dream-panel" aria-labelledby="dream-role-${esc(agentId)}">
+    <header class="dream-cover"><span class="dream-owner">${icon("moon", "sm")}${esc(find("agents", agentId).name)}</span><h2>月下手记</h2><p id="dream-cover-status" role="status">正在读取…</p></header>
     <div class="dream-spread">
       <section class="dream-column dream-cognitions" aria-labelledby="dream-cognitions-title">
-        <div class="dream-heading"><h2 id="dream-cognitions-title">长期认知</h2></div>
+        <div class="dream-heading"><h2 id="dream-cognitions-title">${icon("book")}长期认知</h2><small id="dream-count" aria-live="polite"></small></div>
         <details class="dream-filter" data-fold="dream-filters" ${foldOpen("dream-filters", false) ? "open" : ""}><summary>${icon("filter", "sm")}筛选</summary><form id="dream-filters" class="toolbar">
       <label>类别<select name="category"><option value="">全部类别</option>${Object.entries(
         dreamCategoryLabels,
@@ -69,21 +78,25 @@ async function renderDreams() {
       <label>关键词<input name="query" type="search"></label>
       <button type="submit">筛选</button>
     </form></details>
-        <div id="dream-list">正在读取…</div><div id="dream-detail"></div>
+        <div id="dream-list">正在读取…</div><div id="dream-pagination"></div>
       </section>
       <section class="dream-column dream-fiction" aria-labelledby="dream-fiction-title">
-        <div class="dream-heading"><h2 id="dream-fiction-title">幻想梦境</h2></div>
+        <div class="dream-heading"><h2 id="dream-fiction-title">${icon("moon")}幻想梦境</h2><small id="dream-story-count"></small></div>
         <div id="dream-stories">正在读取…</div>
       </section>
     </div>
-    ${fold("dream-recent-runs", "最近运行", '<div id="dream-runs">正在读取…</div>', { cls: "dream-fold", summary: '<span id="dream-run-summary"></span>' })}
-    ${fold("dream-settings", "梦境设置", '<div id="dream-overview">正在读取…</div><p id="dream-trigger-status" class="hint" role="status"></p>', { cls: "dream-fold", summary: '<span id="dream-settings-summary"></span>' })}
+    ${fold("dream-recent-runs", `${icon("clock")}最近运行`, '<div id="dream-runs">正在读取…</div>', { cls: "dream-fold", summary: '<span id="dream-run-summary"></span>' })}
+    ${fold("dream-settings", `${icon("settings")}梦境设置`, '<div id="dream-overview">正在读取…</div><p id="dream-trigger-status" class="hint" role="status"></p>', { cls: "dream-fold", summary: '<span id="dream-settings-summary"></span>' })}
   </article>`;
   const active = () =>
     tab === "dreams" && roleId === agentId && content.contains(form);
   const form = $("#dream-filters");
   const roleQuery = new URLSearchParams({ agentId });
+  const pageSize = 5;
   let currentOffset = 0;
+  let listRequest = 0;
+  let selectedButton;
+  let appliedFilters = new URLSearchParams(new FormData(form));
   let currentRunId;
   async function overview() {
     const data = await api("/api/dreams/overview?" + roleQuery);
@@ -112,13 +125,10 @@ async function renderDreams() {
     const duration = (ms) =>
       ms % 60000 === 0 ? `${ms / 60000} 分钟` : `${ms / 1000} 秒`;
     $("#dream-cover-status").innerHTML = [
-      `认知梦${data.cognitive.enabled ? "已开启" : "未开启"}`,
-      `幻想梦${data.imaginative.enabled ? "已开启" : "未开启"}`,
-      blocker,
-    ]
-      .filter(Boolean)
-      .map((label) => `<span>${esc(label)}</span>`)
-      .join("");
+      `<span class="${data.cognitive.enabled ? "enabled" : ""}">认知梦${data.cognitive.enabled ? "已开启" : "未开启"}</span>`,
+      `<span class="${data.imaginative.enabled ? "enabled" : ""}">幻想梦${data.imaginative.enabled ? "已开启" : "未开启"}</span>`,
+      blocker ? `<span class="blocked">${esc(blocker)}</span>` : "",
+    ].join("");
     $("#dream-settings-summary").innerHTML = [
       `认知梦 ${duration(data.cognitive.timeoutMs)}`,
       `幻想梦 ${duration(data.imaginative.timeoutMs)}`,
@@ -163,14 +173,18 @@ async function renderDreams() {
     });
   }
   async function list(offset = 0) {
-    const query = new URLSearchParams({ agentId, offset });
-    for (const [key, value] of new FormData(form))
+    const request = ++listRequest;
+    const query = new URLSearchParams({ agentId, offset, limit: pageSize });
+    for (const [key, value] of appliedFilters)
       if (typeof value === "string" && value.trim())
         query.set(key, value.trim());
     const data = await api("/api/dreams/cognitions?" + query);
-    if (!active()) return;
+    if (!active() || request !== listRequest) return;
+    const pages = Math.max(1, Math.ceil(data.total / pageSize));
+    if (offset >= pages * pageSize) return list((pages - 1) * pageSize);
     currentOffset = offset;
-    $("#dream-detail").replaceChildren();
+    selectedButton = undefined;
+    $("#dream-count").textContent = `${data.total} 条`;
     const target = $("#dream-list");
     target.innerHTML = data.items.length
       ? data.items
@@ -178,32 +192,43 @@ async function renderDreams() {
             (row, index) =>
               `<article class="dream-entry"><span class="dream-tag">${esc(dreamCategoryLabels[row.category] || row.category)}</span>
               <p class="dream-thought" title="${esc(row.content)}">${esc(row.content)}</p>
-              <p class="hint">${esc(row.scope_id)} · ${esc(row.epistemic_status)}${row.from_private ? " · 含私聊来源" : ""}</p>
-              <button type="button" class="dream-link" data-dream-detail="${index}">证据与版本 <span aria-hidden="true">→</span></button></article>`,
+              <p class="hint">${esc(row.scope_id)} · ${esc(dreamEvidenceLabels[row.epistemic_status] || row.epistemic_status)}${row.from_private ? " · 含私聊来源" : ""}</p>
+              <button type="button" class="dream-link" data-dream-detail="${index}" aria-expanded="false">证据与版本 <span aria-hidden="true">→</span></button><div class="dream-detail"></div></article>`,
           )
           .join("")
       : '<p class="empty">暂无符合条件的认知。</p>';
     target.querySelectorAll("[data-dream-detail]").forEach((button) => {
       button.onclick = () =>
-        action(() => detail(data.items[Number(button.dataset.dreamDetail)]));
+        action(() =>
+          detail(data.items[Number(button.dataset.dreamDetail)], button),
+        );
     });
-    if (offset || data.nextOffset !== null) {
-      target.insertAdjacentHTML(
-        "beforeend",
-        `<div class="card-actions">${offset ? '<button type="button" id="dream-prev">上一页</button>' : ""}${data.nextOffset !== null ? '<button type="button" id="dream-next">下一页</button>' : ""}</div>`,
-      );
-      if (offset)
-        $("#dream-prev").onclick = () =>
-          action(() => list(Math.max(0, offset - 20)));
-      if (data.nextOffset !== null)
-        $("#dream-next").onclick = () => action(() => list(data.nextOffset));
+    const pagination = $("#dream-pagination");
+    pagination.innerHTML =
+      pages > 1
+        ? `<div class="dream-pager" role="group" aria-label="长期认知分页">
+      <button type="button" id="dream-prev" ${offset === 0 ? "disabled" : ""}>上一页</button>
+      <span role="status">第 ${offset / pageSize + 1} / ${pages} 页</span>
+      <button type="button" id="dream-next" ${data.nextOffset === null ? "disabled" : ""}>下一页</button></div>`
+        : "";
+    if (pages > 1) {
+      $("#dream-prev").onclick = () => action(() => list(offset - pageSize));
+      $("#dream-next").onclick = () => action(() => list(data.nextOffset));
     }
   }
-  async function detail(row) {
+  async function detail(row, button) {
+    const previous = selectedButton;
+    if (previous) {
+      previous.setAttribute("aria-expanded", "false");
+      previous.nextElementSibling.replaceChildren();
+    }
+    selectedButton = previous === button ? undefined : button;
+    if (!selectedButton) return;
     const path = "/api/dreams/cognitions/" + encodeURIComponent(row.id);
     const data = await api(path + "/revisions?" + roleQuery);
-    if (!active()) return;
-    const target = $("#dream-detail");
+    if (!active() || selectedButton !== button) return;
+    button.setAttribute("aria-expanded", "true");
+    const target = button.nextElementSibling;
     target.innerHTML = `<h3>版本记录</h3><p>${esc(data.cognition.content)}</p>
       ${data.items
         .map((version) => {
@@ -266,6 +291,8 @@ async function renderDreams() {
   async function stories() {
     const data = await api("/api/dreams/stories?" + roleQuery);
     if (!active()) return;
+    $("#dream-story-count").textContent =
+      data.items.length === 20 ? "最近 20 篇" : `${data.items.length} 篇`;
     $("#dream-stories").innerHTML =
       data.items
         .map((story) => {
@@ -278,11 +305,11 @@ async function renderDreams() {
             <span class="dream-tag">虚构梦境 · 非现实事件</span><strong class="dream-story-title" title="${esc(story.title)}">${esc(story.title)}</strong>
             <span class="dream-excerpt">${esc(story.narrative)}</span>
             <span class="dream-link"><span class="dream-read">展开梦境</span><span class="dream-close">收起梦境</span> <span aria-hidden="true">→</span></span>
+            ${themes.length ? `<span class="dream-themes">主题 · ${esc(themes.join("、"))}</span>` : ""}
           </summary><div class="dream-story-body">
           <p class="hint">${esc(story.created_at)}</p>
           <h4>故事</h4><p>${esc(story.narrative)}</p>
           <h4>感想</h4><p>${esc(story.reflection)}</p>
-          ${themes.length ? `<p><strong>主题</strong> · ${esc(themes.join("、"))}</p>` : ""}
           ${inspirations.length ? `<h4>梦里的灵感</h4><ul>${inspirations.map(({ kind, content }) => `<li><strong>${esc(dreamInspirationLabels[kind] || kind)}</strong> · ${esc(content)}</li>`).join("")}</ul>` : ""}
           ${published}</div></details>`;
         })
@@ -333,6 +360,7 @@ async function renderDreams() {
   }
   form.onsubmit = (event) => {
     event.preventDefault();
+    appliedFilters = new URLSearchParams(new FormData(form));
     action(() => list());
   };
   await Promise.all([overview(), list(), stories(), runs()]);

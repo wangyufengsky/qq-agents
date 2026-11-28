@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
+import { dreamAdmin } from "../src/dream/admin.mjs";
+import { listCognitions } from "../src/dream/store.mjs";
 import { createServer } from "../src/server.mjs";
 import { config, fixture } from "./helpers.mjs";
 
@@ -153,5 +155,75 @@ test("administrator alone can read, trigger, filter, roll back, pause and delete
   assert.equal(
     (await post("/api/dreams/trigger", { agentId: role, mode: "long" })).status,
     409,
+  );
+});
+
+test("cognition history counts only matching rows and pages deterministically by update time", async (t) => {
+  const f = fixture(t, { cfg: config(2) });
+  const insert = f.store.db.prepare(`INSERT INTO cognitions
+ (id,agent_id,scope_id,category,subject_key,content,epistemic_status,importance,confidence,status,version,source_scopes_json,valid_from,created_at,updated_at)
+ VALUES(?,?,'global',?,?,?,'reported',?,0.5,?,1,'[]','2026-01-01','2026-01-01',?)`);
+  const seed = (id, role, category, status, day, importance) =>
+    insert.run(
+      id,
+      role,
+      category,
+      id,
+      "示例认知",
+      importance,
+      status,
+      `2026-01-${day}`,
+    );
+  for (const id of ["a", "b", "c", "d", "e", "f"])
+    seed(
+      id,
+      "agent-0",
+      "fact",
+      "active",
+      id === "f" ? "11" : "10",
+      id === "b" ? 1 : 0.1,
+    );
+  seed("g", "agent-1", "fact", "active", "12", 1);
+  seed("h", "agent-0", "fact", "archived", "12", 1);
+  seed("i", "agent-0", "reflection", "active", "12", 1);
+  const page = async (offset, query = "示例") => {
+    const url = new URL("/api/dreams/cognitions", "http://localhost");
+    url.search = new URLSearchParams({
+      agentId: "agent-0",
+      category: "fact",
+      status: "active",
+      scopeId: "global",
+      query,
+      limit: 5,
+      offset,
+    });
+    const response = await dreamAdmin(f.runtime, "GET", url, () =>
+      assert.fail(),
+    );
+    assert.equal(response.status, 200);
+    return response.result;
+  };
+  const first = await page(0),
+    last = await page(5);
+  assert.deepEqual(
+    first.items.map((row) => row.id),
+    ["f", "a", "b", "c", "d"],
+  );
+  assert.equal(first.total, 6);
+  assert.equal(first.nextOffset, 5);
+  assert.deepEqual(
+    last.items.map((row) => row.id),
+    ["e"],
+  );
+  assert.equal(last.total, 6);
+  assert.equal(last.nextOffset, null);
+  assert.deepEqual(await page(0, "未命中"), {
+    items: [],
+    total: 0,
+    nextOffset: null,
+  });
+  assert.equal(
+    listCognitions(f.store.db, "agent-0", { category: "fact" })[0].id,
+    "b",
   );
 });
